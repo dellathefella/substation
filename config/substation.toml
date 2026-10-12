@@ -1,0 +1,57 @@
+# Substation configuration
+
+[daemon]
+bind = "0.0.0.0"
+port = 8800
+webui_dist = "./webui/dist"        # served at / when built
+auth_token = ""                    # empty = open (LAN only!)
+session_stick_seconds = 300
+max_concurrent_requests = 8
+
+[orchestrator]
+triage_model = "mlx-community/Qwen3-0.6B-4bit"
+triage_timeout_ms = 250
+triage_upgrade_confidence = 0.8
+cache_enabled = true
+cache_max_entries = 256
+
+# tier -> real models (first = preferred). Placement:
+#   "local" | "node:<id>" | "split:<id>+<id>"
+[orchestrator.tiers.fast]
+models = ["mlx-community/Qwen2.5-1.5B-Instruct-4bit"]
+placement = "local"
+
+[orchestrator.tiers.balanced]
+models = ["mlx-community/Qwen2.5-7B-Instruct-4bit"]
+placement = "local"
+
+[orchestrator.tiers.smart]
+models = ["mlx-community/Qwen2.5-32B-Instruct-4bit"]
+placement = "local"            # baseline: each node standalone. cluster: "split:studio0+studio1"
+
+[runner]
+binary = "./runner/.build/release/substation-runner"
+base_port = 8931
+startup_timeout_s = 120
+idle_evict_seconds = 600         # LRU evict after idle when memory pressure
+min_free_ram_gb = 8              # evict before dropping below this
+
+[nodes]
+# Baseline: studio0 and studio1 each run the full app standalone.
+# For clustering, the controller adds peers here.
+controller_id = "studio0"
+
+[nodes.studio0]
+host = "192.168.7.248"
+agent_port = 8801
+total_ram_gb = 256
+
+[nodes.studio1]
+host = "192.168.7.84"
+agent_port = 8801
+total_ram_gb = 256
+
+[metrics]
+sample_interval_ms = 1000
+event_ring_size = 2000
+ws_tick_batch_ms = 250

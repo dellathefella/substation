@@ -1,0 +1,12 @@
+.swarm/
+.swarm*/
+target/
+runner/
+webui/node_modules/
+webui/dist/
+menubar/.build/
+third_party/llama.cpp/
+models/
+*.gguf
+.DS_Store
+*.log
