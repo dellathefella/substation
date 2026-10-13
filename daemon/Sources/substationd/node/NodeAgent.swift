@@ -85,6 +85,59 @@ extension NodeKit {
 
 public enum NodeRoutes {
     public static func register(_ app: Application, _ kit: NodeKit) throws {
+        // Landing page: this is a headless node agent, not the console.
+        app.get("") { req async throws -> Response in
+            let nodeId = String(kit.nodeId.prefix(8))
+            let html = """
+            <!doctype html><html><head><meta charset="utf-8">
+            <meta http-equiv="refresh" content="300">
+            <title>Substation node \(nodeId)</title>
+            <style>
+            body{background:#0d1017;color:#d7dce5;font:14px/1.5 -apple-system,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
+            .card{background:#151a24;border:1px solid #232b3a;border-radius:12px;padding:28px 34px;min-width:340px;max-width:480px}
+            h1{font-size:16px;margin:0 0 4px;color:#fff} .dim{color:#8a94a6;font-size:12px}
+            .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:11px;margin:10px 6px 14px 0}
+            .ok{background:#12331f;color:#5fd98a} .off{background:#2a2333;color:#9a8fb0}
+            .bar{height:8px;background:#232b3a;border-radius:4px;overflow:hidden;margin:6px 0 2px}
+            .bar>i{display:block;height:100%;background:#3f8cff}
+            table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
+            td{padding:4px 6px;border-top:1px solid #232b3a} .mono{font-family:ui-monospace,monospace}
+            a{color:#5aa2ff}
+            </style></head><body><div class="card">
+            <h1>⬢ Substation node <span class="mono">\(nodeId)</span></h1>
+            <div class="dim">headless worker agent — no console here</div>
+            <div id="pills"><span class="pill off">connecting…</span></div>
+            <div class="dim" id="ram">RAM</div><div class="bar"><i id="rambar" style="width:0%"></i></div>
+            <div class="dim" style="margin-top:10px">runners</div>
+            <table id="runners"><tr><td class="dim">none loaded</td></tr></table>
+            <div class="dim" style="margin-top:16px">Console lives on the controller — <span class="mono">http://&lt;controller&gt;:8800</span></div>
+            </div><script>
+            async function tick(){
+              try{
+                const r = await fetch('/api/node/health'); const d = await r.json();
+                const pills = document.getElementById('pills');
+                pills.innerHTML = '<span class="pill '+(d.rpc_up?'ok':'off')+'">rpc '+(d.rpc_up?'up':'down')+'</span>'
+                  + '<span class="pill ok">healthy</span>';
+                const used = d.ram_used_gb||0, tot = d.ram_total_gb||1;
+                document.getElementById('ram').textContent = 'RAM '+used.toFixed(1)+' / '+tot.toFixed(0)+' GB';
+                document.getElementById('rambar').style.width = Math.min(100, used/tot*100)+'%';
+                const t = document.getElementById('runners');
+                if (d.runners && d.runners.length){
+                  t.innerHTML = d.runners.map(x=>'<tr><td class="mono">'+x.model+'</td><td class="dim">:'+x.port+'</td></tr>').join('');
+                } else { t.innerHTML = '<tr><td class="dim">none loaded</td></tr>'; }
+              }catch(e){
+                document.getElementById('pills').innerHTML = '<span class="pill off">agent unreachable</span>';
+              }
+            }
+            tick(); setInterval(tick, 3000);
+            </script></body></html>
+            """
+            return Response(status: .ok, headers: [
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-store",
+            ], body: .init(string: html))
+        }
+
         app.get("api", "node", "health") { req async throws -> Response in
             try await NodeKit.auth(req, kit)
             return jsonResponse(await kit.healthJSON())
@@ -142,7 +195,7 @@ public enum NodeRoutes {
         app.on(.POST, "api", "admin", "restart", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await NodeKit.auth(req, kit)
             try? await kit.events.publish("daemon.restarting", .object(["scope": .string("node-self")]))
-            DaemonRestart.scheduleSelfRestart()
+            DaemonRestart.scheduleSelfRestart(preExit: { await kit.engines.shutdownAll() })
             return jsonResponse(.object(["restarting": .bool(true)]))
         }
 

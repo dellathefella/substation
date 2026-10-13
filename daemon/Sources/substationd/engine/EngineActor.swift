@@ -46,6 +46,9 @@ public actor EngineActor {
     private var lastCacheTune: [String: Date] = [:]
     /// PID of an rpc-server we did NOT spawn but adopted (orphan listener).
     private var rpcAdoptedPid: Int32 = 0
+    /// Every child process we spawned (triage, rpc-server, engines). Kept so the
+    /// daemon can force-terminate them on exit / self-restart instead of orphaning.
+    private var managed: [Int32: Process] = [:]
 
     private let events: EventActor
     private let metrics: MetricsActor
@@ -94,7 +97,9 @@ public actor EngineActor {
         } catch {
             return 0
         }
-        return p.processIdentifier
+        let pid = p.processIdentifier
+        managed[pid] = p
+        return pid
     }
 
     public func startTriageIfNeeded(_ cfg: ConfigSnapshot) async {
@@ -116,6 +121,21 @@ public actor EngineActor {
 
     public func stopTriage() {
         if triagePid > 0 { kill(triagePid, SIGTERM); triagePid = 0 }
+    }
+
+    /// Force-terminate every child process this daemon spawned (triage, rpc-server,
+    /// engines). SIGTERM first for a graceful flush, then SIGKILL for anything still
+    /// alive (a Metal/OOM-stuck llama-server ignores SIGTERM). Called on normal exit
+    /// and before a self-restart so we never orphan GPU-holding servers.
+    public func shutdownAll() {
+        let procs = Array(managed.values)
+        for p in procs where p.isRunning { kill(p.processIdentifier, SIGTERM) }
+        usleep(500_000)
+        for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL) }
+        managed.removeAll()
+        triagePid = 0
+        rpcPid = 0
+        rpcAdoptedPid = 0
     }
 
     private var triageHealthCache: (at: Date, ok: Bool)?
@@ -278,7 +298,7 @@ public actor EngineActor {
             ]
             if isSplit {
                 let rpc = splitPeers.compactMap { peer in
-                    cfg.node(peer).map { "\($0.host):\($0.rpcPort)" }
+                    cfg.node(peer).map { "\($0.rpcHost):\($0.rpcPort)" }
                 }
                 let weights = model.tensorSplit.isEmpty
                     ? (["1"] + splitPeers.map { _ in "1" }).joined(separator: ",")
@@ -308,15 +328,16 @@ public actor EngineActor {
             let spawnBody: JSONValue = .object([
                 "model": .string(model.name),
                 "port": .jInt(port),
-                "rpc": .array(splitPeers.compactMap { cfg.node($0) }.map { .string("\($0.host):\($0.rpcPort)") }),
+                "rpc": .array(splitPeers.compactMap { cfg.node($0) }.map { .string("\($0.rpcHost):\($0.rpcPort)") }),
                 "tensor_split": .array((model.tensorSplit.isEmpty
                     ? ["1"] + splitPeers.map { _ in "1" }
                     : model.tensorSplit.split(separator: ",").map(String.init)
                 ).map { JSONValue.string($0) }),
             ])
             let status: Int
+            let spawned: JSONValue?
             do {
-                (status, _) = try await client.json(
+                (status, spawned) = try await client.json(
                     method: "POST",
                     url: "http://\(n.host):\(n.agentPort)/api/node/runner/spawn",
                     body: spawnBody,
@@ -325,8 +346,11 @@ public actor EngineActor {
                 )
             }
             if status >= 400 { throw EngineError.status(status) }
+            // The node may return an already-running engine on a different port
+            // than we requested — always adopt the node's actual port.
+            let actualPort = spawned?["port"]?.intValue ?? port
             engine = RunningEngine(
-                model: model.name, node: node, host: n.host, port: port,
+                model: model.name, node: node, host: n.host, port: actualPort,
                 pid: 0, split: isSplit, rpcPeers: splitPeers, placement: model.placement,
                 loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: model.ctx
             )
@@ -467,7 +491,7 @@ public actor EngineActor {
             return false
         }
         let key = e.key
-        if e.pid > 0 { kill(e.pid, SIGTERM) }
+        if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid) }
         else if let n = cfg.node(e.node) {
             _ = try? await client.json(
                 method: "POST", url: "http://\(n.host):\(n.agentPort)/api/node/runner/kill",
@@ -496,7 +520,7 @@ public actor EngineActor {
     public func unload(model: String) async {
         for (key, e) in engines where e.model == model {
             engines.removeValue(forKey: key)
-            if e.pid > 0 { kill(e.pid, SIGTERM) }
+            if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid) }
             slotUtil.removeValue(forKey: key)
             lastMetrics.removeValue(forKey: key)
             await events.publish("model.unloaded", [
@@ -519,7 +543,7 @@ public actor EngineActor {
                 .sorted { $0.lastUsed < $1.lastUsed }
             guard let victim = victims.first ?? engines.values.sorted(by: { $0.lastUsed < $1.lastUsed }).first else { return }
             engines.removeValue(forKey: victim.key)
-            if victim.pid > 0 { kill(victim.pid, SIGTERM) }
+            if victim.pid > 0 { kill(victim.pid, SIGTERM); managed.removeValue(forKey: victim.pid) }
             slotUtil.removeValue(forKey: victim.key)
             await events.publish("model.unloaded", [
                 ("model", .string(victim.model)),

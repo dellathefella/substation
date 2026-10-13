@@ -45,6 +45,9 @@ public struct NodeStatic: Sendable, Hashable {
     public var host: String
     public var agentPort: Int
     public var rpcPort: Int
+    /// Host used for the RPC data plane (e.g. a Thunderbolt point-to-point IP);
+    /// falls back to `host` when unset.
+    public var rpcHost: String
     public var totalRamGB: Double
 }
 
@@ -244,6 +247,7 @@ public struct ConfigSnapshot: Sendable {
                 host: v["host"]?.stringValue ?? "",
                 agentPort: v["agent_port"]?.intValue ?? 8801,
                 rpcPort: v["rpc_port"]?.intValue ?? 50052,
+                rpcHost: v["rpc_host"]?.stringValue ?? (v["host"]?.stringValue ?? ""),
                 totalRamGB: v["total_ram_gb"]?.doubleValue ?? 0
             )
         }
@@ -253,7 +257,7 @@ public struct ConfigSnapshot: Sendable {
     public func node(_ id: String) -> NodeStatic? {
         if id == "local" || id == "self" { return nil }
         if let n = nodes.first(where: { $0.id == id || $0.host == id }) { return n }
-        return NodeStatic(id: id, host: id, agentPort: agentPort, rpcPort: rpcPort, totalRamGB: 0)
+        return NodeStatic(id: id, host: id, agentPort: agentPort, rpcPort: rpcPort, rpcHost: id, totalRamGB: 0)
     }
 }
 

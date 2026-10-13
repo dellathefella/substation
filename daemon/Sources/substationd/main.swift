@@ -40,8 +40,10 @@ while idx < argList.count {
     idx += 1
 }
 
+let daemonLogName = role == "node" ? "agent" : "controller"
+DaemonLogFile.configure(path: dataDir + "/logs/\(daemonLogName).log")
 LoggingSystem.bootstrap { label in
-    var handler = StreamLogHandler.standardError(label: label)
+    var handler = DaemonLogHandler()
     handler.logLevel = Environment.get("SUBSTATION_LOG_LEVEL").flatMap(Logger.Level.init(rawValue:)) ?? .info
     return handler
 }
@@ -125,6 +127,8 @@ if role == "node" {
 }
 
 try await app.execute()
+// Never leave GPU-holding llama-servers orphaned when this daemon goes down.
+await engines.shutdownAll()
 try await app.asyncShutdown()
 
 // MARK: - Background loops

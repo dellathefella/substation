@@ -5,7 +5,7 @@ import Vapor
 /// exact binary with its original argv, then exits the current process.
 /// Works for both controller and node-agent roles.
 public enum DaemonRestart {
-    public static func scheduleSelfRestart(delaySec: TimeInterval = 0.7) {
+    public static func scheduleSelfRestart(delaySec: TimeInterval = 0.7, preExit: @escaping @Sendable () async -> Void = {}) {
         let argv = CommandLine.arguments
         guard let first = argv.first else { return }
         let exe = URL(fileURLWithPath: first).resolvingSymlinksInPath().path
@@ -32,12 +32,15 @@ public enum DaemonRestart {
             return
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + delaySec) {
-            exit(0)
+            Task {
+                await preExit()
+                exit(0)
+            }
         }
     }
 
     /// Fire-and-forget restart of every joined node's agent, then self.
-    public static func restartFleet(nodes: [NodeEntry], client: EngineClient, token: String, kitEvents: EventActor) async {
+    public static func restartFleet(nodes: [NodeEntry], client: EngineClient, token: String, kitEvents: EventActor, preExit: @escaping @Sendable () async -> Void = {}) async {
         for n in nodes {
             _ = try? await client.json(
                 method: "POST", url: "http://\(n.ip):\(n.agentPort)/api/admin/restart",
@@ -45,6 +48,6 @@ public enum DaemonRestart {
             )
         }
         try? await kitEvents.publish("daemon.restarting", .object(["scope": .string("fleet")]))
-        scheduleSelfRestart(delaySec: 1.5)
+        scheduleSelfRestart(delaySec: 1.5, preExit: preExit)
     }
 }

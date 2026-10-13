@@ -581,7 +581,7 @@ public enum Routes {
         app.on(.POST, "api", "admin", "restart", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await auth(req, kit)
             try? await kit.events.publish("daemon.restarting", .object(["scope": .string("self")]))
-            DaemonRestart.scheduleSelfRestart()
+            DaemonRestart.scheduleSelfRestart(preExit: { await kit.engines.shutdownAll() })
             return jsonResponse(.object(["restarting": .bool(true)]))
         }
 
@@ -589,7 +589,7 @@ public enum Routes {
             try await auth(req, kit)
             let cfg = await kit.cfg.snapshot
             let nodes = await kit.nodes.allNodes()
-            Task { await DaemonRestart.restartFleet(nodes: nodes, client: kit.client, token: cfg.authToken, kitEvents: kit.events) }
+            Task { await DaemonRestart.restartFleet(nodes: nodes, client: kit.client, token: cfg.authToken, kitEvents: kit.events, preExit: { await kit.engines.shutdownAll() }) }
             return jsonResponse(.object(["restarting": .bool(true), "peers": .jInt(nodes.count)]))
         }
 
