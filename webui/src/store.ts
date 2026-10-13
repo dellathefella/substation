@@ -215,7 +215,7 @@ export const useStore = create<DashboardStore>()((set, get) => ({
     set(finalizeSparks(ttft, total));
   },
 
-  replaceConfig: (config) => set({ config: config ?? get().config, configVersion: get().configVersion + 1 }),
+  replaceConfig: (config) => set({ config: config ?? get().config }),
 
   patchConfigLocal: (patch) => set({ config: mergeConfigPatch(get().config, patch) }),
 
