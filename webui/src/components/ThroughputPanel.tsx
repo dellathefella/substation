@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AreaSeries, ColorType, createChart } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import { useMemo, useRef, useState } from 'react';
 import { fmtNum } from '../format.js';
 import { useStore } from '../store.js';
 import type { Tier } from '../types.js';
-import { Empty, Panel, TIER_COLORS } from './ui.js';
+import { Panel, TIER_COLORS } from './ui.js';
 
 type TierSel = Tier | 'all';
 const SELS: readonly TierSel[] = ['all', 'fast', 'balanced', 'smart'] as const;
@@ -15,93 +13,126 @@ const SERIES_COLOR: Record<TierSel, string> = {
   smart: TIER_COLORS['smart'] ?? '#a78bfa',
 };
 
+interface Pt {
+  t: number;
+  v: number;
+}
+
+function fmtTime(unixSec: number): string {
+  const d = new Date(unixSec * 1000);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function Sparkline({ pts, color }: { pts: Pt[]; color: string }): React.JSX.Element | null {
+  const plotRef = useRef<HTMLDivElement | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
+
+  const n = pts.length;
+  const max = useMemo(() => Math.max(1, ...pts.map((p) => p.v)) * 1.12, [pts]);
+  const W = 600;
+  const H = 150;
+
+  const paths = useMemo(() => {
+    if (n < 2) return null;
+    const x = (i: number): number => (i / (n - 1)) * W;
+    const y = (v: number): number => (1 - v / max) * H;
+    const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(p.v).toFixed(1)}`).join(' ');
+    return { line, area: `${line} L ${W} ${H} L 0 ${H} Z` };
+  }, [pts, n, max]);
+
+  if (n < 2) return null;
+
+  const onMove = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const el = plotRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    setHover(Math.round(ratio * (n - 1)));
+  };
+
+  const gid = `spark-grad-${color.slice(1)}`;
+  const hoverPt = hover !== null && hover >= 0 && hover < n ? pts[hover] : null;
+
+  return (
+    <div className="spark-wrap">
+      <div className="spark-y">
+        <span>{max.toFixed(0)}</span>
+        <span>{(max / 2).toFixed(0)}</span>
+        <span>0</span>
+      </div>
+      <div
+        className="spark-plot"
+        ref={plotRef}
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+          {[0.25, 0.5, 0.75].map((f) => (
+            <line
+              key={f}
+              x1={0}
+              x2={W}
+              y1={f * H}
+              y2={f * H}
+              vectorEffect="non-scaling-stroke"
+              strokeWidth={1}
+              stroke="rgba(61,77,105,0.14)"
+            />
+          ))}
+          <defs>
+            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.34} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          {paths ? <path d={paths.area} fill={`url(#${gid})`} /> : null}
+          {paths ? (
+            <path
+              d={paths.line}
+              fill="none"
+              stroke={color}
+              strokeWidth={1.6}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+            />
+          ) : null}
+          {hoverPt ? (
+            <circle
+              cx={(hover! / (n - 1)) * W}
+              cy={(1 - hoverPt.v / max) * H}
+              r={0.9}
+              fill={color}
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : null}
+        </svg>
+        {hoverPt ? (
+          <div
+            className="spark-tip"
+            style={{ left: `${(hover! / (n - 1)) * 100}%` }}
+          >
+            {fmtNum(hoverPt.v, 1)} tok/s
+            <span className="spark-tip-t">{fmtTime(hoverPt.t)}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function ThroughputPanel(): React.JSX.Element {
   const live = useStore((s) => s.live);
   const [sel, setSel] = useState<TierSel>('all');
-  const [chartOk, setChartOk] = useState(true);
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
 
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    let chart: IChartApi | null = null;
-    try {
-      chart = createChart(host, {
-        autoSize: true,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#7c8aa5',
-          fontSize: 10,
-        },
-        grid: {
-          vertLines: { color: 'rgba(61,77,105,0.14)' },
-          horzLines: { color: 'rgba(61,77,105,0.14)' },
-        },
-        rightPriceScale: { borderColor: 'rgba(61,77,105,0.35)', scaleMargins: { top: 0.12, bottom: 0.06 } },
-        timeScale: { borderColor: 'rgba(61,77,105,0.35)', timeVisible: true, secondsVisible: true, rightOffset: 3 },
-        crosshair: { mode: 0 },
-        handleScale: { axisPressedMouseMove: { time: true, price: false } },
-      });
-      const series = chart.addSeries(AreaSeries, {
-        lineType: 0,
-        lineWidth: 2,
-        lineColor: SERIES_COLOR.all,
-        topColor: 'rgba(59,130,246,0.34)',
-        bottomColor: 'rgba(59,130,246,0.02)',
-        priceLineVisible: false,
-        lastValueVisible: true,
-        crosshairMarkerRadius: 3,
-      });
-      chartRef.current = chart;
-      seriesRef.current = series;
-      setChartOk(true);
-    } catch {
-      setChartOk(false);
-    }
-    return () => {
-      try {
-        chart?.remove();
-      } catch {
-        /* noop */
-      }
-      chartRef.current = null;
-      seriesRef.current = null;
-    };
-  }, []);
-
-  const points = useMemo(
-    () =>
-      live.slice(-240).map((p) => ({
-        time: p.t as UTCTimestamp,
-        value: Number((sel === 'all' ? p.all : p[sel]).toFixed(2)),
-      })),
+  const pts = useMemo<Pt[]>(
+    () => live.slice(-240).map((p) => ({ t: p.t, v: sel === 'all' ? p.all : p[sel] })),
     [live, sel],
   );
 
-  useEffect(() => {
-    const series = seriesRef.current;
-    const chart = chartRef.current;
-    if (!series || !chart) return;
-    try {
-      const color = SERIES_COLOR[sel];
-      series.applyOptions({
-        lineColor: color,
-        topColor: `${color}52`,
-        bottomColor: `${color}06`,
-      });
-      if (points.length > 1) {
-        series.setData(points as Parameters<ISeriesApi<'Area'>['setData']>[0]);
-        chart.timeScale().fitContent();
-      }
-    } catch {
-      setChartOk(false);
-    }
-  }, [points, sel]);
-
   const latest = live.length > 0 ? live[live.length - 1] : undefined;
   const latestVal = latest ? (sel === 'all' ? latest.all : latest[sel]) : null;
+  const first = pts.length > 0 ? pts[0] : undefined;
 
   return (
     <Panel
@@ -110,7 +141,12 @@ export function ThroughputPanel(): React.JSX.Element {
       right={
         <div className="seg" role="group" aria-label="tier filter">
           {SELS.map((t) => (
-            <button key={t} className={`seg-btn${sel === t ? ' on' : ''}`} onClick={() => setSel(t)} style={sel === t && t !== 'all' ? { color: SERIES_COLOR[t] } : undefined}>
+            <button
+              key={t}
+              className={`seg-btn${sel === t ? ' on' : ''}`}
+              onClick={() => setSel(t)}
+              style={sel === t && t !== 'all' ? { color: SERIES_COLOR[t] } : undefined}
+            >
               {t}
             </button>
           ))}
@@ -120,9 +156,15 @@ export function ThroughputPanel(): React.JSX.Element {
         </div>
       }
     >
-      <div className="chart-host" ref={hostRef} style={{ display: chartOk ? 'block' : 'none' }} />
-      {!chartOk ? <Empty text="chart unavailable in this environment" /> : null}
-      {points.length <= 1 ? <div className="chart-empty">{live.length === 0 ? 'waiting for stream.tick…' : 'warming up…'}</div> : null}
+      <Sparkline pts={pts} color={SERIES_COLOR[sel]} />
+      {pts.length <= 1 ? (
+        <div className="chart-empty">{live.length === 0 ? 'waiting for stream.tick…' : 'warming up…'}</div>
+      ) : (
+        <div className="spark-x">
+          <span>{first ? fmtTime(first.t) : ''}</span>
+          <span>now</span>
+        </div>
+      )}
     </Panel>
   );
 }
