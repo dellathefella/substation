@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { bootstrap } from './api.js';
 import { CachePanel } from './components/CachePanel.js';
+import { ChatPanel } from './components/ChatPanel.js';
 import { ClusterPanel } from './components/ClusterPanel.js';
 import { Header } from './components/Header.js';
+import type { View } from './components/Header.js';
 import { LatencyPanel } from './components/LatencyPanel.js';
 import { ModelsPanel } from './components/ModelsPanel.js';
 import { RoutingFeed } from './components/RoutingFeed.js';
@@ -15,6 +17,7 @@ import { connectDashboard } from './ws.js';
 
 export function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<View>('dash');
   const hydrate = useStore((s) => s.hydrate);
   const booted = useStore((s) => s.booted);
   const ws = useStore((s) => s.ws);
@@ -37,7 +40,7 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="app">
-      <Header onOpenSettings={() => setSettingsOpen(true)} />
+      <Header onOpenSettings={() => setSettingsOpen(true)} view={view} onView={setView} />
       {ws === 'offline' ? (
         <div className="banner banner-warn offline-banner" role="alert">
           <span className="banner-code">WS OFFLINE</span>
@@ -46,23 +49,29 @@ export function App(): React.JSX.Element {
           </span>
         </div>
       ) : null}
-      <main className="grid">
-        <div className="row row-top">
-          <ThroughputPanel />
-          <TriagePanel />
-        </div>
-        <div className="row row-mid">
-          <LatencyPanel />
-          <CachePanel />
-        </div>
-        <div className="row row-feed">
-          <RoutingFeed />
-          <ModelsPanel />
-        </div>
-        <div className="row">
-          <ClusterPanel />
-        </div>
-      </main>
+      {view === 'dash' ? (
+        <main className="grid">
+          <div className="row row-top">
+            <ThroughputPanel />
+            <TriagePanel />
+          </div>
+          <div className="row row-mid">
+            <LatencyPanel />
+            <CachePanel />
+          </div>
+          <div className="row row-feed">
+            <RoutingFeed />
+            <ModelsPanel />
+          </div>
+          <div className="row">
+            <ClusterPanel />
+          </div>
+        </main>
+      ) : (
+        <main className="chat-view">
+          <ChatPanel />
+        </main>
+      )}
       <footer className="footer">
         <span>substationd · protocol v2</span>
         <span className="dim">triage → tier → route → schedule · model switching stays transparent to clients</span>

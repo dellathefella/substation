@@ -18,6 +18,30 @@ export function envValue(key: string): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
+export function authToken(): string {
+  try {
+    return localStorage.getItem('substation.token') ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    if (token) localStorage.setItem('substation.token', token);
+    else localStorage.removeItem('substation.token');
+  } catch {
+    /* ignore */
+  }
+}
+
+export function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const h: Record<string, string> = { accept: 'application/json', ...(extra ?? {}) };
+  const t = authToken();
+  if (t) h['authorization'] = `Bearer ${t}`;
+  return h;
+}
+
 /* VITE_WS_URL (ws|wss|http|https) → REST base (same origin as daemon) */
 export function apiBase(): string {
   const raw = envValue('VITE_WS_URL');
@@ -53,7 +77,7 @@ export function wsUrl(): string {
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`${apiBase()}${path}`, { headers: { accept: 'application/json' } });
+    const res = await fetch(`${apiBase()}${path}`, { headers: authHeaders() });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -126,7 +150,7 @@ async function post(path: string, body?: unknown): Promise<AdminResult> {
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: authHeaders({ 'content-type': 'application/json' }),
       body: body === undefined ? '{}' : JSON.stringify(body),
     });
     let parsed: unknown = null;
@@ -145,7 +169,7 @@ async function put(path: string, body: unknown): Promise<AdminResult> {
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
     });
     let parsed: unknown = null;
@@ -168,4 +192,8 @@ export const api = {
   loadModel: (name: string): Promise<AdminResult> => post(`/api/models/${encodeURIComponent(name)}/load`),
   unloadModel: (name: string): Promise<AdminResult> => post(`/api/models/${encodeURIComponent(name)}/unload`),
   putConfig: (patch: ConfigPatch): Promise<AdminResult> => put('/api/config', patch),
+  getConfig: (): Promise<RuntimeConfig | null> => getConfig(),
+  rotateKey: (): Promise<AdminResult> => post('/api/admin/rotate-key'),
+  resetConfig: (): Promise<AdminResult> => post('/api/admin/reset-config'),
+  tuneApply: (): Promise<AdminResult> => post('/api/tune/apply'),
 };

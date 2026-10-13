@@ -79,16 +79,27 @@ export interface DashboardStore {
   tick(now: number): void;
 }
 
-function mergeConfigPatch(cfg: RuntimeConfig | null, patch: ConfigPatch): RuntimeConfig {
-  const out: RuntimeConfig = { ...(cfg ?? {}) };
+function deepMergeRecord(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
   for (const [k, v] of Object.entries(patch)) {
-    if (k === 'cluster' && typeof v === 'object' && v !== null) {
-      out.cluster = { ...(out.cluster ?? {}), ...(v as RuntimeConfig['cluster']) };
-    } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-      (out as Record<string, string | number | boolean>)[k] = v;
+    const cur = out[k];
+    if (
+      v !== null && typeof v === 'object' && !Array.isArray(v) &&
+      cur !== null && typeof cur === 'object' && !Array.isArray(cur)
+    ) {
+      out[k] = deepMergeRecord(cur as Record<string, unknown>, v as Record<string, unknown>);
+    } else {
+      out[k] = v;
     }
   }
   return out;
+}
+
+function mergeConfigPatch(cfg: RuntimeConfig | null, patch: ConfigPatch): RuntimeConfig {
+  return deepMergeRecord({ ...(cfg ?? {}) }, patch as unknown as Record<string, unknown>) as RuntimeConfig;
 }
 
 function rowFromRequest(id: string, virtual: string, ts: number): FeedRow {

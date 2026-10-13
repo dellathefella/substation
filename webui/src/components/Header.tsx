@@ -20,7 +20,9 @@ function stateTone(state: string | undefined): 'ok' | 'warn' | 'err' | 'info' | 
   }
 }
 
-export function Header(props: { onOpenSettings: () => void }): ReactNode {
+export type View = 'dash' | 'chat';
+
+export function Header(props: { onOpenSettings: () => void; view: View; onView: (v: View) => void }): ReactNode {
   const status = useStore((s) => s.status);
   const ws = useStore((s) => s.ws);
   const wsUrl = useStore((s) => s.wsUrl);
@@ -97,6 +99,14 @@ export function Header(props: { onOpenSettings: () => void }): ReactNode {
       </div>
 
       <div className="header-right">
+        <nav className="view-nav" aria-label="View">
+          <button className={`nav-btn${props.view === 'dash' ? ' active' : ''}`} onClick={() => props.onView('dash')}>
+            Dashboard
+          </button>
+          <button className={`nav-btn${props.view === 'chat' ? ' active' : ''}`} onClick={() => props.onView('chat')}>
+            Chat
+          </button>
+        </nav>
         {paused ? (
           <span className="paused-badge" role="status">
             PAUSED

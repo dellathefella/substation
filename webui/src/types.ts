@@ -94,17 +94,40 @@ export interface ClusterWarning {
 }
 
 export interface RuntimeConfig {
-  cluster?: { enabled?: boolean; heartbeat_ms?: number };
-  default_ctx?: number;
-  session_stick_seconds?: number;
-  max_concurrent_requests?: number;
-  triage_timeout_ms?: number;
-  triage_upgrade_confidence?: number;
-  cache_enabled?: boolean;
-  cache_max_entries?: number;
-  cache_max_bytes_mb?: number;
-  idle_evict_seconds?: number;
-  min_free_ram_gb?: number;
+  [key: string]: unknown;
+  cluster?: { enabled?: boolean; heartbeat_ms?: number; controller_id?: string };
+  daemon?: {
+    auth_token?: string;
+    bind?: string;
+    port?: number;
+    session_stick_seconds?: number;
+    max_concurrent_requests?: number;
+    start_on_login?: boolean;
+    webui_dist?: string;
+  };
+  orchestrator?: {
+    triage_gguf?: string;
+    triage_port?: number;
+    triage_timeout_ms?: number;
+    triage_upgrade_confidence?: number;
+    cache_enabled?: boolean;
+    cache_max_entries?: number;
+    default_model?: string;
+    idle_load_only?: boolean;
+    default_ctx?: number;
+    tiers?: Record<string, { models?: string[] }>;
+  };
+  engines?: {
+    llama_server?: string;
+    rpc_server?: string;
+    models_dir?: string;
+    base_port?: number;
+    default_ctx?: number;
+    idle_evict_seconds?: number;
+    min_free_ram_gb?: number;
+    startup_timeout_s?: number;
+  };
+  models?: { name: string; tier?: string; size_gb?: number; ctx?: number; placement?: string; gguf?: string }[];
 }
 
 export type ConfigPatch = { [key: string]: string | number | boolean | ConfigPatch };
