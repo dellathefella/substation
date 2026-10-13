@@ -56,6 +56,18 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             .foregroundColor: model.isOnline ? NSColor.labelColor : NSColor.disabledControlTextColor,
         ]
         var text = NSAttributedString(string: title, attributes: attributes)
+        if model.degradedAuto {
+            // Auto is running on a default model (orchestrator unavailable).
+            let combined = NSMutableAttributedString(attributedString: text)
+            combined.append(NSAttributedString(
+                string: " ⚠︎",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+                    .foregroundColor: NSColor.systemOrange,
+                ]
+            ))
+            text = combined
+        }
         if showBadge {
             let combined = NSMutableAttributedString(attributedString: text)
             combined.append(NSAttributedString(
@@ -115,6 +127,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         add("Resume Routing", #selector(resumeRouting))
         add("Reload Config", #selector(reloadConfig))
         menu.addItem(.separator())
+        let login = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
+        login.target = self
+        login.state = LaunchAtLogin.isEnabled() ? .on : .off
+        menu.addItem(login)
+        menu.addItem(.separator())
         add("Set Daemon URL…", #selector(setDaemonURL))
         add("Quit Substation", #selector(quit), key: "q")
     }
@@ -140,6 +157,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     @objc private func reloadConfig() {
         model.reloadConfig()
+    }
+
+    @objc private func toggleLoginItem() {
+        let next = !LaunchAtLogin.isEnabled()
+        if let err = LaunchAtLogin.setEnabled(next) {
+            let a = NSAlert(); a.messageText = "Start at Login"; a.informativeText = err
+            a.addButton(withTitle: "OK"); NSApp.activate(ignoringOtherApps: true); a.runModal()
+        }
+        buildMenu()
     }
 
     @objc private func setDaemonURL() {

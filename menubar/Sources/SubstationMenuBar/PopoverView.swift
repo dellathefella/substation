@@ -8,6 +8,7 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if model.offline { offlineBanner }
+            if model.degradedAuto { degradedBanner }
 
             statsRow
 
@@ -81,6 +82,25 @@ struct PopoverView: View {
                 Task { await model.refresh() }
             }
             .controlSize(.small)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
+    }
+
+    private var degradedBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.branch")
+                .foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Orchestrator unavailable")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Auto routing on default model \(model.status?.defaultModel ?? "?")")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))

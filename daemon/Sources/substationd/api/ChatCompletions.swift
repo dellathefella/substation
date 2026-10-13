@@ -9,6 +9,8 @@ public enum APIError: Error {
     case unauthorized
     case notFound(String)
     case upstream(String)
+    case triageModelMissing(String)
+    case noModelLoaded(String)
 
     public var abortResponse: Response {
         let code: String
@@ -20,6 +22,12 @@ public enum APIError: Error {
         case .unauthorized: status = .unauthorized; code = "unauthorized"; message = "missing or invalid bearer token"
         case .notFound(let m): status = .notFound; code = "not_found"; message = m
         case .upstream(let m): status = .badGateway; code = "upstream_error"; message = m
+        case .triageModelMissing(let path):
+            status = .serviceUnavailable; code = "triage_model_missing"
+            message = "Auto mode requires the triage (small) model — not found at '\(path)'. Download it (or set orchestrator.triage_gguf) to unlock auto routing; until then select a specific model by name."
+        case .noModelLoaded(let m):
+            status = .serviceUnavailable; code = "no_model_loaded"
+            message = m
         }
         var headers = HTTPHeaders()
         headers.replaceOrAdd(name: .contentType, value: "application/json; charset=utf-8")
@@ -132,6 +140,17 @@ public struct ChatPipeline: Sendable {
 
         let completionTokens = (out["usage"]?["completion_tokens"]?.doubleValue)
             ?? Double((out["choices"]?[0]?["message"]?["content"]?.stringValue ?? "").split(separator: " ").count)
+        let promptTokens = out["usage"]?["prompt_tokens"]?.doubleValue ?? 0
+        await orch.usage.record(prompt: Int(promptTokens), completion: Int(completionTokens),
+                                tier: route.tier, model: route.model)
+        try? await orch.events.publish("usage.recorded", [
+            ("id", .string(route.requestId)),
+            ("prompt", .jInt(Int(promptTokens))),
+            ("completion", .jInt(Int(completionTokens))),
+            ("tier", .string(route.tier)),
+            ("model", .string(route.model)),
+            ("cached", .bool(false)),
+        ])
         let tokS = totalMs > 0 ? completionTokens / (totalMs / 1000) : 0
         await orch.metrics.increment("requests_total")
         await orch.metrics.record("total_ms", totalMs)
@@ -185,6 +204,12 @@ public struct ChatPipeline: Sendable {
         var engineBody = body.objectValue ?? [:]
         engineBody["model"] = .string(route.model)
         engineBody["stream"] = .bool(true)
+        // Ask the engine for an authoritative usage chunk (prompt token counts);
+        // strip it from the forwarded stream unless the client asked for it.
+        let clientWantsUsage = body["stream_options"]?["include_usage"]?.boolValue ?? false
+        if engineBody["stream_options"] == nil {
+            engineBody["stream_options"] = .object(["include_usage": .bool(true)])
+        }
         let engineBodyJSON = JSONValue.object(engineBody)
 
         let orch = self.orch
@@ -205,6 +230,8 @@ public struct ChatPipeline: Sendable {
             let recorder = Recorder()
             var firstTokenMs: Double?
             var tokens = 0
+            var usagePrompt = 0
+            var usageCompletion = 0
             var lastTick = Date()
             var tickTokens = 0
             let batchMs = await orch.cfg.snapshot.wsTickBatchMs
@@ -222,6 +249,18 @@ public struct ChatPipeline: Sendable {
                     }
                     if payload == "[DONE]" {
                         try await writer.write(.buffer(ByteBuffer(string: "data: [DONE]\n\n")))
+                        continue
+                    }
+                    // Authoritative usage chunk (choices empty + usage object): capture, don't count as token.
+                    if payload.contains("\"usage\""),
+                       let uObj = JSONCoding.decode(Data(payload.utf8))?.objectValue,
+                       uObj["choices"]?.arrayValue?.isEmpty ?? false
+                    {
+                        usagePrompt = Int(uObj["usage"]?["prompt_tokens"]?.doubleValue ?? 0)
+                        usageCompletion = Int(uObj["usage"]?["completion_tokens"]?.doubleValue ?? 0)
+                        if clientWantsUsage {
+                            try await writer.write(.buffer(ByteBuffer(string: "data: \(payload)\n\n")))
+                        }
                         continue
                     }
                     tokens += 1
@@ -258,18 +297,29 @@ public struct ChatPipeline: Sendable {
             }
 
             let totalMs = Date().timeIntervalSince(t0) * 1000
-            let tokS = totalMs > 0 ? Double(tokens) / (totalMs / 1000) : 0
+            let completionTokens = usageCompletion > 0 ? Double(usageCompletion) : Double(tokens)
+            let tokS = totalMs > 0 ? completionTokens / (totalMs / 1000) : 0
             await orch.admission.release()
             await orch.metrics.increment("requests_total")
             await orch.metrics.record("total_ms", totalMs)
             await orch.metrics.record("tok_s", tokS)
             await orch.metrics.record("tok_s.\(model)", tokS)
             await orch.metrics.record("total_ms.\(model)", totalMs)
-            await orch.metrics.recordTokens(Double(tokens), ms: totalMs)
+            await orch.metrics.recordTokens(completionTokens, ms: totalMs)
+            await orch.usage.record(prompt: usagePrompt, completion: Int(completionTokens),
+                                    tier: tier, model: model)
+            try? await orch.events.publish("usage.recorded", [
+                ("id", .string(id)),
+                ("prompt", .jInt(usagePrompt)),
+                ("completion", .jInt(Int(completionTokens))),
+                ("tier", .string(tier)),
+                ("model", .string(model)),
+                ("cached", .bool(false)),
+            ])
             await orch.engines.touch(engine.key)
             await orch.events.publish("stream.done", [
                 ("id", .string(id)),
-                ("total_tokens", .jInt(tokens)),
+                ("total_tokens", .jInt(Int(completionTokens))),
                 ("ms", .jInt(Int(totalMs))),
                 ("cached", .bool(false)),
             ])

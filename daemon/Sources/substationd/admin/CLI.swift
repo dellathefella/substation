@@ -88,10 +88,15 @@ public enum CLI {
             default: print("model load|unload <name>"); return 2
             }
         case "cluster":
-            guard rest.first == "enable" || rest.first == "disable" else { print("cluster enable|disable"); return 2 }
+            if rest.first == "unjoin" {
+                let node = rest.count >= 2 ? "?node=\(rest[1])" : ""
+                return await request("POST", "/api/cluster/unjoin\(node)", json([:]))
+            }
+            guard rest.first == "enable" || rest.first == "disable" else { print("cluster enable|disable|unjoin [node]"); return 2 }
             return await request("PUT", "/api/config", json(["cluster": .object(["enabled": .bool(rest[0] == "enable")])]))
         case "config":
-            guard rest.first == "get" || rest.first == "set" else { print("config get | config set <key> <json>"); return 2 }
+            if rest.first == "reset" { return await request("POST", "/api/admin/reset-config", json([:])) }
+            guard rest.first == "get" || rest.first == "set" else { print("config get | config set <key> <json> | config reset"); return 2 }
             if rest[0] == "get" { return await request("GET", "/api/config") }
             guard rest.count >= 3, let v = JSONCoding.decode(Data(rest[2].utf8)) else {
                 print("usage: config set <dotted.key> <json-value>"); return 2
@@ -103,6 +108,8 @@ public enum CLI {
         case "pause": return await request("POST", "/api/admin/pause", json([:]))
         case "resume": return await request("POST", "/api/admin/resume", json([:]))
         case "reload": return await request("POST", "/api/admin/reload", json([:]))
+        case "rotate-key": return await request("POST", "/api/admin/rotate-key", json([:]))
+        case "reset": return await request("POST", "/api/admin/reset-config", json([:]))
         case "chat":
             guard let prompt = rest.first else { print("chat \"prompt\" [--model auto] [--stream]"); return 2 }
             let flags = Array(rest.dropFirst())

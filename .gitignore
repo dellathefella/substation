@@ -11,3 +11,7 @@ models/
 *.gguf
 .DS_Store
 *.log
+
+state/
+/tmp/
+*.log

@@ -154,6 +154,18 @@ public enum NodeRoutes {
             return jsonResponse(.object(["code": .string(code), "expires_in": .jInt(600)]))
         }
 
+        // Controller pushes a rotated key here (authed with the CURRENT key) so
+        // the whole cluster moves to the new key together.
+        app.on(.POST, "api", "admin", "set-key", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await NodeKit.auth(req, kit)
+            let body = (try? await Routes.jsonBody(req)) ?? .object([:])
+            guard let key = body["key"]?.stringValue, !key.isEmpty else {
+                return jsonResponse(.object(["error": .object(["message": .string("missing key"), "code": .string("bad_request")])]), status: .badRequest)
+            }
+            _ = try? await kit.cfg.setDotted("daemon.auth_token", .string(key))
+            return jsonResponse(.object(["ok": .bool(true)]))
+        }
+
         // Peer join receiver (spec §6): forwards code to controller /join-relay.
         app.on(.POST, "api", "cluster", "join", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await NodeKit.auth(req, kit)

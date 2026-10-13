@@ -7,10 +7,19 @@ let argList = Array(CommandLine.arguments.dropFirst())
 if argList.first == "admin" || argList.first == "join" {
     exit(await CLI.run(argList))
 }
+if argList.first == "mcp" {
+    let env = ProcessInfo.processInfo.environment
+    await MCP.stdio(
+        base: env["SUBSTATION_URL"] ?? "http://127.0.0.1:8800",
+        bearer: env["SUBSTATION_TOKEN"] ?? ""
+    )
+    exit(0)
+}
 
 var role = "controller"
 var configPath = "./config/substation.toml"
 var dataDir = "./state"
+var authTokenFlag = ""
 var idx = 0
 while idx < argList.count {
     switch argList[idx] {
@@ -20,6 +29,8 @@ while idx < argList.count {
         if idx + 1 < argList.count { configPath = argList[idx + 1]; idx += 1 }
     case "--data":
         if idx + 1 < argList.count { dataDir = argList[idx + 1]; idx += 1 }
+    case "--auth-token":
+        if idx + 1 < argList.count { authTokenFlag = argList[idx + 1]; idx += 1 }
     default:
         break
     }
@@ -33,6 +44,9 @@ LoggingSystem.bootstrap { label in
 }
 
 let cfg = try ConfigStore(path: configPath)
+// API key via flag or env (SUBSTATION_TOKEN); persisted so rotation owns it thereafter.
+let keyOverride = !authTokenFlag.isEmpty ? authTokenFlag : (Environment.get("SUBSTATION_TOKEN") ?? "")
+if !keyOverride.isEmpty { _ = try? await cfg.setDotted("daemon.auth_token", .string(keyOverride)) }
 let events = EventActor()
 let metrics = MetricsActor()
 let mem = Memory()

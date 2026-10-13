@@ -41,6 +41,12 @@ public struct ConfigSnapshot: Sendable {
     public var triageUpgradeConfidence: Double { tree["orchestrator"]?["triage_upgrade_confidence"]?.doubleValue ?? 0.8 }
     public var cacheEnabled: Bool { tree["orchestrator"]?["cache_enabled"]?.boolValue ?? true }
     public var cacheMaxEntries: Int { tree["orchestrator"]?["cache_max_entries"]?.intValue ?? 256 }
+    /// Model to use when auto routing but the orchestrator/triage model is unavailable.
+    /// Empty → smallest catalog model.
+    public var defaultModel: String { tree["orchestrator"]?["default_model"]?.stringValue ?? "" }
+    /// Load only the orchestrator (triage) model at startup; big tiers load on demand.
+    public var idleLoadOnly: Bool { tree["orchestrator"]?["idle_load_only"]?.boolValue ?? true }
+    public var startOnLogin: Bool { tree["daemon"]?["start_on_login"]?.boolValue ?? false }
 
     public var llamaServer: String { tree["engines"]?["llama_server"]?.stringValue ?? "llama-server" }
     public var rpcServer: String { tree["engines"]?["rpc_server"]?.stringValue ?? "rpc-server" }
@@ -145,7 +151,7 @@ public actor ConfigStore {
     public func setDotted(_ path: String, _ value: JSONValue) throws -> [String] {
         let parts = path.split(separator: ".").map(String.init)
         snapshot = ConfigSnapshot(raw: Self.setPath(snapshot.raw, parts, value))
-        try? TOML.write(snapshot.raw).write(toFile: path, atomically: true, encoding: .utf8)
+        try? TOML.write(snapshot.raw).write(toFile: self.path, atomically: true, encoding: .utf8)
         let keys = [path]
         for w in watchers { w(snapshot) }
         return keys
@@ -153,6 +159,24 @@ public actor ConfigStore {
 
     public func addWatcher(_ w: @escaping @Sendable (ConfigSnapshot) -> Void) {
         watchers.append(w)
+    }
+
+    /// Remove a dotted key path (e.g. nodes.studio0). Returns whether it existed.
+    @discardableResult
+    public func removePath(_ path: String) -> Bool {
+        let parts = path.split(separator: ".").map(String.init)
+        let (next, removed) = Self.removePathInner(snapshot.raw, parts)
+        snapshot = ConfigSnapshot(raw: next)
+        try? TOML.write(snapshot.raw).write(toFile: self.path, atomically: true, encoding: .utf8)
+        if removed { for w in watchers { w(snapshot) } }
+        return removed
+    }
+
+    /// Reset the entire tree to `tree` (defaults) and persist.
+    public func reset(to tree: JSONValue) throws {
+        snapshot = ConfigSnapshot(raw: tree)
+        try TOML.write(snapshot.raw).write(toFile: path, atomically: true, encoding: .utf8)
+        for w in watchers { w(snapshot) }
     }
 
     private static func setPath(_ v: JSONValue, _ parts: [String], _ value: JSONValue) -> JSONValue {
@@ -164,5 +188,21 @@ public actor ConfigStore {
             obj[first] = setPath(obj[first] ?? .object([:]), Array(parts.dropFirst()), value)
         }
         return .object(obj)
+    }
+
+    private static func removePathInner(_ v: JSONValue, _ parts: [String]) -> (JSONValue, Bool) {
+        guard let first = parts.first else { return (v, false) }
+        var obj = v.objectValue ?? [:]
+        if parts.count == 1 {
+            let had = obj[first] != nil
+            obj[first] = nil
+            return (.object(obj), had)
+        }
+        if obj[first] != nil {
+            let (child, removed) = removePathInner(obj[first]!, Array(parts.dropFirst()))
+            obj[first] = child
+            return (.object(obj), removed)
+        }
+        return (.object(obj), false)
     }
 }

@@ -36,10 +36,12 @@ public struct Orchestrator: Sendable {
     public let cache: ResponseCache
     public let state: DaemonState
     public let client = EngineClient()
+    public let usage: TokenUsage
 
     public init(
         cfg: ConfigStore, events: EventActor, metrics: MetricsActor, engines: EngineActor,
-        admission: Admission, sessions: SessionActor, cache: ResponseCache, state: DaemonState
+        admission: Admission, sessions: SessionActor, cache: ResponseCache, state: DaemonState,
+        usage: TokenUsage
     ) {
         self.cfg = cfg
         self.events = events
@@ -49,12 +51,22 @@ public struct Orchestrator: Sendable {
         self.sessions = sessions
         self.cache = cache
         self.state = state
+        self.usage = usage
     }
 
     // MARK: - Triage
 
-    public static func heuristicTier(_ prompt: String) -> (String, [String]) {
-        let hasCode = prompt.contains("```") || prompt.lowercased().contains("code")
+    /// Fallback model when auto routing without an orchestrator: config
+    /// `orchestrator.default_model` if loadable, else the smallest catalog model.
+    public static func defaultModelName(_ cfg: ConfigSnapshot) -> String? {
+        let fm = FileManager.default
+        if !cfg.defaultModel.isEmpty, let m = cfg.model(cfg.defaultModel), fm.fileExists(atPath: m.gguf) {
+            return cfg.defaultModel
+        }
+        return cfg.models.filter { fm.fileExists(atPath: $0.gguf) }.min(by: { $0.sizeGB < $1.sizeGB })?.name
+    }
+
+    public static func heuristicTier(_ prompt: String) -> (String, [String]) {        let hasCode = prompt.contains("```") || prompt.lowercased().contains("code")
         if prompt.count > 600 || hasCode { return ("smart", ["len:\(prompt.count)", "code:\(hasCode)"]) }
         if prompt.count < 80 { return ("fast", ["len:\(prompt.count)"]) }
         return ("balanced", ["len:\(prompt.count)"])
@@ -131,16 +143,50 @@ public struct Orchestrator: Sendable {
 
         let userText = Self.lastUserText(messages)
 
+        // Orchestrator availability + fallback cascade:
+        //   auto + triage present   → model triage (real intelligence/speed routing)
+        //   auto + triage missing   → default model (config default_model → smallest catalog model)
+        //   nothing available       → explicit "no model loaded + orchestrator unavailable" error
+        let triagePresent = FileManager.default.fileExists(atPath: cfg.triageGguf)
+        let orchestratorUp: Bool
+        if triagePresent {
+            orchestratorUp = await engines.triageHealthy(cfg: cfg)
+        } else {
+            orchestratorUp = false
+        }
+        if !orchestratorUp {
+            if Self.defaultModelName(cfg) == nil {
+                throw APIError.noModelLoaded(
+                    "No model is loaded and the orchestrator is unavailable (triage model '\(cfg.triageGguf)' not found). Download the small model or set orchestrator.default_model to a catalog model."
+                )
+            }
+        }
+
         // 1) Triage (virtual models only; a concrete model name is a pin).
         var decision: TierDecision
         var forcedTier: String?
+        var presetModel: String?
         switch virtual {
-        case "auto": decision = await triage(userText, cfg: cfg)
+        case "auto":
+            if orchestratorUp {
+                decision = await triage(userText, cfg: cfg)
+            } else {
+                let d = Self.defaultModelName(cfg)!
+                decision = TierDecision(tier: cfg.model(d)?.tier ?? "balanced", confidence: 1,
+                                        method: "fallback", ms: 0,
+                                        signals: ["orchestrator_unavailable", "default_model:\(d)"])
+                presetModel = d
+                await events.publish("orchestrator.fallback", [
+                    ("id", .string(requestId)),
+                    ("reason", .string(triagePresent ? "triage_engine_unreachable" : "triage_model_missing")),
+                    ("default_model", .string(d)),
+                ])
+            }
         case "auto-fast": decision = TierDecision(tier: "fast", confidence: 1, method: "model", ms: 0, signals: ["pinned"])
         case "auto-smart": decision = TierDecision(tier: "smart", confidence: 1, method: "model", ms: 0, signals: ["pinned"])
         default: forcedTier = cfg.model(virtual)?.tier ?? "balanced"; decision = TierDecision(tier: forcedTier!, confidence: 1, method: "model", ms: 0, signals: ["pinned-model"])
         }
-        try? await events.publish("triage.decision", [
+        await events.publish("triage.decision", [
             ("id", .string(requestId)),
             ("tier", .string(decision.tier)),
             ("confidence", .jDouble(decision.confidence)),
@@ -152,10 +198,10 @@ public struct Orchestrator: Sendable {
 
         // 2) Session stickiness: stay on the pinned model; one-way upgrade only
         //    at confidence >= threshold (transparency invariant #3).
-        var modelName = forcedTier != nil ? virtual : ""
+        var modelName = presetModel ?? (forcedTier != nil ? virtual : "")
         var tier = decision.tier
         var sticky = false
-        if forcedTier == nil {
+        if forcedTier == nil, presetModel == nil {
             let candidate = (cfg.tiers[tier] ?? []).first(where: { cfg.model($0) != nil })
             var pinned: Sticky?
             if let key = sessionKey, !key.isEmpty {

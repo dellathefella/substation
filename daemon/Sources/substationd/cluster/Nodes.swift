@@ -99,6 +99,16 @@ public actor NodesActor {
 
     public func allNodes() -> [NodeEntry] { Array(nodes.values) }
 
+    public func unregister(id: String) { nodes.removeValue(forKey: id) }
+
+    public func clearCluster() {
+        nodes.removeAll()
+        codes.removeAll()
+        peers.removeAll()
+    }
+
+    public func clearCodes() { codes.removeAll() }
+
     public func node(_ id: String) -> NodeEntry? { nodes[id] }
 
     public func nodesJSON() -> JSONValue {

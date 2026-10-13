@@ -13,6 +13,9 @@ struct StatusResponse: Codable, Sendable {
     let modelsTotal: Int?
     let models: [StatusModel]?
     let nodes: [StatusNode]?
+    let autoAvailable: Bool?
+    let orchestratorUp: Bool?
+    let defaultModel: String?
 
     enum CodingKeys: String, CodingKey {
         case state, models, nodes
@@ -22,11 +25,20 @@ struct StatusResponse: Codable, Sendable {
         case tokensPerSec = "tokens_per_sec"
         case modelsLoaded = "models_loaded"
         case modelsTotal = "models_total"
+        case autoAvailable = "auto_available"
+        case orchestratorUp = "orchestrator_up"
+        case defaultModel = "default_model"
     }
 
     var isPaused: Bool {
         guard let s = state?.lowercased() else { return false }
         return s.contains("paus")
+    }
+
+    /// Auto routing is degraded to a default model (orchestrator not running
+    /// but a fallback model exists). True = degraded; false = healthy or unknown.
+    var isDegradedAuto: Bool {
+        (orchestratorUp == false) && (autoAvailable == true)
     }
 }
 

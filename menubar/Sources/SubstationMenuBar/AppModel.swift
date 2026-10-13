@@ -33,6 +33,8 @@ final class AppModel: ObservableObject {
 
     var isOnline: Bool { !offline }
 
+    var degradedAuto: Bool { status?.isDegradedAuto ?? false }
+
     var tokensPerSec: Double? { status?.tokensPerSec ?? metrics?.tokensPerSec }
     var requestsPerMin: Double? { status?.requestsPerMin ?? metrics?.requestsPerMin }
     var requestsActive: Int? { status?.requestsActive ?? metrics?.requestsActive }

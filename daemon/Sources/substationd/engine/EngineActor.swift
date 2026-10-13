@@ -44,6 +44,13 @@ public actor EngineActor {
     private let metrics: MetricsActor
     private let mem: Memory
     private let client = EngineClient()
+    private let sleepGuard = SleepGuard()
+
+    public var sleepPrevented: Bool { sleepGuard.isActive }
+
+    private func refreshSleepFromLive(_ live: [RunningEngine]) {
+        sleepGuard.setActive(live.contains { $0.pid > 0 })
+    }
 
     public init(events: EventActor, metrics: MetricsActor, mem: Memory) {
         self.events = events
@@ -90,6 +97,21 @@ public actor EngineActor {
 
     public func stopTriage() {
         if triagePid > 0 { kill(triagePid, SIGTERM); triagePid = 0 }
+    }
+
+    private var triageHealthCache: (at: Date, ok: Bool)?
+    /// Cached (2s) health probe of the resident triage engine.
+    public func triageHealthy(cfg: ConfigSnapshot) async -> Bool {
+        if let c = triageHealthCache, Date().timeIntervalSince(c.at) < 2 { return c.ok }
+        let ok = await isHealthOK(url: "http://127.0.0.1:\(cfg.triagePort)/health")
+        triageHealthCache = (Date(), ok)
+        return ok
+    }
+
+    /// Orchestrator is "ready" only when the triage GGUF exists AND its engine answers.
+    public func orchestratorReady(cfg: ConfigSnapshot) async -> Bool {
+        guard FileManager.default.fileExists(atPath: cfg.triageGguf) else { return false }
+        return await triageHealthy(cfg: cfg)
     }
 
     public func startRPCSelf(_ cfg: ConfigSnapshot) -> Bool {
@@ -331,6 +353,7 @@ public actor EngineActor {
                 let ms = max(250, cfgNow.metricsSampleMs)
                 try? await Task.sleep(for: .milliseconds(ms))
                 let engines = await self.listLive()
+                await self.refreshSleepFromLive(engines)
                 for e in engines {
                     await self.sampleEngine(e, cfg: cfgNow)
                 }

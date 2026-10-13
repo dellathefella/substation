@@ -1,3 +1,5 @@
+import NIOHTTP1
+import Security
 import Foundation
 import Vapor
 import NIOCore
@@ -18,6 +20,7 @@ public struct Kit: Sendable {
     public let mem: Memory
     public let pipeline: ChatPipeline
     public let client = EngineClient()
+    public let usage = TokenUsage()
 
     public init(
         cfg: ConfigStore, events: EventActor, metrics: MetricsActor, engines: EngineActor,
@@ -37,7 +40,8 @@ public struct Kit: Sendable {
         self.mem = mem
         self.pipeline = ChatPipeline(orch: Orchestrator(
             cfg: cfg, events: events, metrics: metrics, engines: engines,
-            admission: admission, sessions: sessions, cache: cache, state: state
+            admission: admission, sessions: sessions, cache: cache, state: state,
+            usage: usage
         ))
     }
 }
@@ -45,16 +49,31 @@ public struct Kit: Sendable {
 public enum Routes {
     public static let version = "0.1.0"
 
+    /// CSPRNG API key: "sub_" + 40 hex chars.
+    public static func newAPIKey() -> String {
+        var bytes = [UInt8](repeating: 0, count: 20)
+        let ok = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        if ok != errSecSuccess { for i in bytes.indices { bytes[i] = UInt8.random(in: 0...255) } }
+        return "sub_" + bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
     public static func registerController(_ app: Application, _ kit: Kit) throws {
         // Transparency: virtual catalog + real catalog, distinct owned_by.
         app.get("v1", "models") { req async throws -> Response in
             try await auth(req, kit)
             let cfg = await kit.cfg.snapshot
+            let autoOK = Orchestrator.defaultModelName(cfg) != nil
+            let orchUp = await kit.engines.orchestratorReady(cfg: cfg)
             var data: [JSONValue] = ["auto", "auto-fast", "auto-smart"].map { name in
                 .object([
                     "id": .string(name),
                     "object": .string("model"),
                     "owned_by": .string("substation-virtual"),
+                    "substation": .object([
+                        "auto_available": .bool(name != "auto" || autoOK),
+                        "orchestrator_up": .bool(orchUp),
+                        "triage_model_present": .bool(FileManager.default.fileExists(atPath: cfg.triageGguf)),
+                    ]),
                 ])
             }
             for m in cfg.models {
@@ -112,6 +131,9 @@ public enum Routes {
                     "min_free_gb": .jDouble(cfg.minFreeRamGB),
                 ]),
                 "cluster_enabled": .bool(cfg.clusterEnabled),
+                "auto_available": .bool(Orchestrator.defaultModelName(cfg) != nil),
+                "orchestrator_up": .bool(await kit.engines.orchestratorReady(cfg: cfg)),
+                "default_model": Orchestrator.defaultModelName(cfg).map { JSONValue.string($0) } ?? .null,
                 "engines": .array(engines.map { e in
                     .object([
                         "model": .string(e.model), "node": .string(e.node), "port": .jInt(e.port),
@@ -136,6 +158,7 @@ public enum Routes {
             var obj = snap.objectValue ?? [:]
             obj["queue_depth"] = queue
             obj["cache"] = cacheStats
+            obj["token_usage"] = await kit.usage.snapshotJSON()
             obj["memory"] = .object([
                 "free_gb": .jDouble((mem.freeGB * 100).rounded() / 100),
                 "total_gb": .jDouble((mem.totalGB * 100).rounded() / 100),
@@ -290,8 +313,15 @@ public enum Routes {
             let rpcPort = body["rpc_port"]?.intValue ?? 50052
             await kit.nodes.register(id: nodeId, name: name, ip: ip, agentPort: agentPort, rpcPort: rpcPort)
 
-            // Joining implies clustering; persist + enable rpc-server locally.
-            let keys = try await kit.cfg.applyPatch(.object(["cluster": .object(["enabled": .bool(true)])]))
+            // Joining implies clustering; persist node + enable rpc-server locally.
+            let keys = try await kit.cfg.applyPatch(.object([
+                "cluster": .object(["enabled": .bool(true)]),
+                "nodes": .object([nodeId: .object([
+                    "host": .string(ip),
+                    "agent_port": .jInt(agentPort),
+                    "rpc_port": .jInt(rpcPort),
+                ])]),
+            ]))
             let cfg = await kit.cfg.snapshot
             _ = await kit.engines.startRPCSelf(cfg)
             try? await kit.events.publish("config.changed", .object(["keys": .array(keys.map { JSONValue.string($0) })]))
@@ -305,6 +335,13 @@ public enum Routes {
             let events = kit.events
             let client = kit.client
             Task.detached(priority: .utility) {
+                // Ask the peer to bring up its rpc worker, then probe the link.
+                _ = try? await client.json(
+                    method: "POST",
+                    url: "http://\(ip):\(agentPort)/api/node/rpc/start",
+                    body: .object([:]),
+                    timeout: 15
+                )
                 let link = await LinkProbe.probe(host: ip, agentPort: agentPort, cfg: cfg, events: events, client: client)
                 await nodesActor.setLink(id: nodeId, link: link)
             }
@@ -324,6 +361,82 @@ public enum Routes {
                 "peer_command": .string("networksetup -setmanual \"Thunderbolt Bridge\" 10.99.\(idx).2 255.255.255.0"),
                 "note": .string("needs admin; run on both ends; controller re-probes within 60s"),
             ]))
+        }
+
+        // Unjoin a single node (?node=id) or the whole cluster (no param).
+        app.on(.POST, "api", "cluster", "unjoin") { req async throws -> Response in
+            try await auth(req, kit)
+            if let node = req.query[String.self, at: "node"] {
+                await kit.nodes.unregister(id: node)
+                await kit.cfg.removePath("nodes.\(node)")
+                try? await kit.events.publish("node.unjoined", [("node", .string(node))])
+            } else {
+                await kit.nodes.clearCluster()
+                await kit.cfg.removePath("nodes")
+                _ = try? await kit.cfg.applyPatch(.object(["cluster": .object(["enabled": .bool(false)])]))
+                await kit.engines.stopRPCSelf()
+                try? await kit.events.publish("cluster.disabled", [("reason", .string("unjoined"))])
+            }
+            let remaining = await kit.nodes.allNodes().count
+            return jsonResponse(.object([
+                "ok": .bool(true), "nodes_remaining": .jInt(remaining),
+                "rpc_server_stopped": .bool(remaining == 0),
+            ]))
+        }
+
+        // Rotate the global API key. Cuts over immediately; returns the new key
+        // exactly once. Reset-config (factory template) clears it (disables auth).
+        app.on(.POST, "api", "admin", "rotate-key") { req async throws -> Response in
+            try await auth(req, kit)
+            let oldKey = await kit.cfg.snapshot.authToken
+            let key = Routes.newAPIKey()
+            // Push to peers while the old key is still valid; all-or-nothing.
+            var pushed: [String] = []
+            for n in await kit.nodes.allNodes() {
+                let r = try? await kit.client.json(
+                    method: "POST",
+                    url: "http://\(n.ip):\(n.agentPort)/api/admin/set-key",
+                    body: .object(["key": .string(key)]),
+                    bearer: oldKey,
+                    timeout: 10
+                )
+                if let r, r.0 >= 400 {
+                    return jsonResponse(.object(["error": .object([
+                        "message": .string("peer \(n.id) refused rotation (\(r.0)); nothing rotated"),
+                        "code": .string("rotation_failed"),
+                    ])]), status: .badGateway)
+                }
+                pushed.append(n.id)
+            }
+            _ = try await kit.cfg.setDotted("daemon.auth_token", .string(key))
+            try? await kit.events.publish("admin.key.rotated", [("at", .jDouble(Date().timeIntervalSince1970 * 1000))])
+            return jsonResponse(.object([
+                "ok": .bool(true),
+                "key": .string(key),
+                "nodes_updated": .array(pushed.map { JSONValue.string($0) }),
+                "note": .string("new key effective now; update webui/menubar clients and MCP env. Reset-config disables auth"),
+            ]))
+        }
+
+        // Reset config to factory defaults (keeps models on disk; clears cluster).
+        app.on(.POST, "api", "admin", "reset-config") { req async throws -> Response in
+            try await auth(req, kit)
+            try await kit.cfg.reset(to: TOML.parse(ConfigDefaults.toml))
+            await kit.nodes.clearCluster()
+            await kit.engines.stopRPCSelf()
+            let keys: [String] = ["*"]
+            try? await kit.events.publish("config.changed", [("keys", .array(keys.map { JSONValue.string($0) })), ("reset", .bool(true))])
+            return jsonResponse(.object(["ok": .bool(true), "reset": .bool(true)]))
+        }
+
+        // MARK: MCP server (HTTP transport, JSON-RPC 2.0)
+
+        app.on(.POST, "mcp", body: .collect(maxSize: "2mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let body = try await Routes.jsonBody(req)
+            let cfg = await kit.cfg.snapshot
+            let out = await MCP.respond(body, base: "http://127.0.0.1:\(cfg.port)", bearer: cfg.authToken)
+            return jsonResponse(out)
         }
 
         // MARK: Chat
@@ -369,7 +482,9 @@ public enum Routes {
         guard !token.isEmpty else { return }
         let header = req.headers.first(name: .authorization) ?? ""
         let provided = header.hasPrefix("Bearer ") ? String(header.dropFirst(7)) : header
-        guard constantTimeEqual(provided, token) else { throw APIError.unauthorized }
+        guard constantTimeEqual(provided, token) else {
+            throw Abort(.unauthorized, reason: "missing or invalid bearer token")
+        }
     }
 
     static func jsonBody(_ req: Request) async throws -> JSONValue {
