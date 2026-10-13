@@ -38,6 +38,36 @@ public actor EventActor {
         publish(Event(type, data))
     }
 
+    private struct DedupState { var ms: Double; var hash: Int; var count: Int }
+    private var dedup: [String: DedupState] = [:]
+
+    /// Emits at most one event per `key` per cooldown window while the payload
+    /// is unchanged; suppressed duplicates are counted and reported on the
+    /// next emission as `repeated: N`. A changed payload emits immediately.
+    public func publishDeduped(_ type: String, key: String, _ data: JSONValue, cooldown: Double = 20) {
+        let now = Date().timeIntervalSince1970 * 1000
+        let h = data.hashValue
+        if let last = dedup[key], last.hash == h {
+            if now - last.ms < cooldown * 1000 {
+                dedup[key] = DedupState(ms: last.ms, hash: h, count: last.count + 1)
+                return
+            }
+            var obj = data.objectValue ?? [:]
+            obj["repeated"] = .jInt(last.count)
+            dedup[key] = DedupState(ms: now, hash: h, count: 0)
+            publish(Event(type, .object(obj)))
+            return
+        }
+        dedup[key] = DedupState(ms: now, hash: h, count: 0)
+        publish(Event(type, data))
+    }
+
+    public func publishDeduped(_ type: String, key: String, _ fields: [(String, JSONValue)], cooldown: Double = 20) {
+        var dict: [String: JSONValue] = [:]
+        for (k, v) in fields { dict[k] = v }
+        publishDeduped(type, key: key, .object(dict), cooldown: cooldown)
+    }
+
     public func publish(_ type: String, _ fields: [(String, JSONValue)]) {
         var obj: [String: JSONValue] = [:]
         for (k, v) in fields { obj[k] = v }

@@ -7,6 +7,21 @@ import Combine
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private let model: AppModel
+    /// The transformer mark (assets/substation.svg shipped as a resource);
+    /// template mode tints it to match the menu bar appearance.
+    static func logoImage(template: Bool = true) -> NSImage? {
+        if let url = Bundle.module.url(forResource: "substation", withExtension: "svg"),
+           let img = NSImage(contentsOf: url) {
+            let h: CGFloat = 18
+            img.size = NSSize(width: h * 249.0 / 281.0, height: h)
+            img.isTemplate = template
+            return img
+        }
+        let fallback = NSImage(systemSymbolName: "cube.box.fill", accessibilityDescription: "Substation")
+        if template { fallback?.isTemplate = true }
+        return fallback
+    }
+
     private var statusItem: NSStatusItem
     private let popover = NSPopover()
     private let menu = NSMenu()
@@ -18,9 +33,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         super.init()
 
         if let button = statusItem.button {
-            let image = NSImage(systemSymbolName: "cube.box.fill", accessibilityDescription: "Substation")
-            image?.isTemplate = true
-            button.image = image
+            button.image = Self.logoImage()
             button.imagePosition = .imageLeading
             button.target = self
             button.action = #selector(statusItemClicked(_:))
@@ -130,6 +143,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         add("Pause Routing", #selector(pauseRouting))
         add("Resume Routing", #selector(resumeRouting))
         add("Reload Config", #selector(reloadConfig))
+        add("Restart Engines", #selector(restartEngines))
         menu.addItem(.separator())
         let login = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         login.target = self
@@ -153,6 +167,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     @objc private func pauseRouting() {
         model.pauseRouting()
+    }
+
+    @objc private func restartEngines() {
+        model.restartAllEngines()
     }
 
     @objc private func resumeRouting() {

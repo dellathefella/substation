@@ -39,8 +39,10 @@ struct PopoverView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "cube.box.fill")
-                .foregroundColor(stateColor)
+            Image(nsImage: StatusItemController.logoImage(template: false) ?? NSImage())
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 15, height: 17)
             Text("Substation")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
@@ -130,17 +132,45 @@ struct PopoverView: View {
     // MARK: Stats
 
     private var statsRow: some View {
-        HStack(alignment: .top, spacing: 0) {
-            stat("Uptime", model.uptimeLabel)
-            statDivider
-            stat("Req/min", shortNumber(model.requestsPerMin))
-            statDivider
-            stat("Tok/s", shortNumber(model.tokensPerSec))
-            statDivider
-            stat("Active", model.requestsActive.map(String.init) ?? "—")
-            statDivider
-            stat("Cache", model.cacheHitLabel)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 0) {
+                stat("Uptime", model.uptimeLabel)
+                statDivider
+                stat("Req/min", shortNumber(model.requestsPerMin))
+                statDivider
+                stat("Tok/s", shortNumber(model.tokensPerSec))
+                statDivider
+                stat("Active", model.requestsActive.map(String.init) ?? "—")
+                statDivider
+                stat("Cache", model.cacheHitLabel)
+            }
+            HStack(alignment: .top, spacing: 0) {
+                stat("CPU", model.status?.system?.cpuPct.map { String(format: "%.0f%%", $0) } ?? "—")
+                statDivider
+                stat("GPU", model.status?.system?.gpuPct.map { String(format: "%.0f%%", $0) } ?? "—")
+                statDivider
+                stat("Net↓", mbps(model.status?.system?.rxBps))
+                statDivider
+                stat("Net↑", mbps(model.status?.system?.txBps))
+                statDivider
+                stat("RAM", ramLabel)
+            }
+            if let usage = model.metrics?.tokenUsage {
+                Text("\(shortNumber(Double(usage.promptTotal ?? 0))) in · \(shortNumber(Double(usage.completionTotal ?? 0))) out tokens")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
         }
+    }
+
+    private var ramLabel: String {
+        guard let m = model.status?.memory, let used = m.usedGB, let total = m.totalGB else { return "—" }
+        return String(format: "%.0f/%.0fG", used, total)
+    }
+
+    private func mbps(_ v: Double?) -> String {
+        guard let v else { return "—" }
+        return String(format: "%.1f", v / 1_048_576)
     }
 
     private func stat(_ label: String, _ value: String) -> some View {
@@ -170,28 +200,66 @@ struct PopoverView: View {
 
     private var modelsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("Loaded Models")
-            if model.loadedModels.isEmpty {
-                Text("No models loaded")
+            HStack {
+                sectionTitle("Engines")
+                Spacer()
+                if !model.engines.isEmpty {
+                    Button {
+                        model.restartAllEngines()
+                    } label: {
+                        HStack(spacing: 3) {
+                            if model.restartingAll {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text("All")
+                        }
+                        .font(.system(size: 9))
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(model.restartingAll || model.offline)
+                    .help("Restart every loaded engine")
+                }
+            }
+            if model.engines.isEmpty {
+                Text(model.loadedModels.isEmpty ? "No engines loaded" : "\(model.loadedModels.count) models loaded")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             } else {
-                ForEach(model.loadedModels) { m in
+                ForEach(model.engines) { e in
                     HStack(spacing: 6) {
-                        Text(m.displayName)
+                        Text(e.displayName)
                             .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(m.displayTier)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(tierColor(m.displayTier))
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Capsule().fill(tierColor(m.displayTier).opacity(0.15)))
-                        Text(m.displayNode)
+                        if let tps = model.tokS(for: e.displayName), tps > 0 {
+                            Text(String(format: "%.0f tok/s", tps))
+                                .font(.system(size: 9)).foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        if e.isSplit {
+                            Text("RPC")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.purple)
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(Capsule().fill(Color.purple.opacity(0.15)))
+                        }
+                        Text(e.displayNode)
                             .font(.system(size: 9)).foregroundColor(.secondary)
                             .lineLimit(1)
-                        Text(m.displaySize)
-                            .font(.system(size: 9)).foregroundColor(.secondary)
+                        Button {
+                            model.restartEngine(e.displayName)
+                        } label: {
+                            if model.restarting.contains(e.displayName) {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(model.restarting.contains(e.displayName) || model.offline)
+                        .help("Restart \(e.displayName)@\(e.displayNode)")
                     }
                 }
             }

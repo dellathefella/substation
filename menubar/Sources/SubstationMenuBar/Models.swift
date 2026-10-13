@@ -17,9 +17,12 @@ struct StatusResponse: Codable, Sendable {
     let orchestratorUp: Bool?
     let defaultModel: String?
     let autoRouter: String?
+    let engines: [EngineEntry]?
+    let system: StatusSystem?
+    let memory: StatusMemory?
 
     enum CodingKeys: String, CodingKey {
-        case state, models, nodes
+        case state, models, nodes, engines, system, memory
         case uptimeSec = "uptime_s"
         case requestsActive = "requests_active"
         case requestsPerMin = "requests_per_min"
@@ -85,13 +88,73 @@ struct MetricsResponse: Codable, Sendable {
     let tokensPerSec: Double?
     let requestsPerMin: Double?
     let requestsActive: Int?
+    let tokenUsage: UsageSummary?
+    let byKey: [String: Percentile]?
 
     enum CodingKeys: String, CodingKey {
         case cacheHitRatio = "cache_hit_ratio"
         case tokensPerSec = "tokens_per_sec"
         case requestsPerMin = "requests_per_min"
         case requestsActive = "requests_active"
+        case tokenUsage = "token_usage"
+        case byKey = "by_key"
     }
+}
+
+struct UsageSummary: Codable, Sendable {
+    let promptTotal: Int?
+    let completionTotal: Int?
+    let cacheHits: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case promptTotal = "prompt_total"
+        case completionTotal = "completion_total"
+        case cacheHits = "cache_hits"
+    }
+}
+
+struct Percentile: Codable, Sendable {
+    let p50: Double?
+}
+
+struct StatusSystem: Codable, Sendable {
+    let cpuPct: Double?
+    let gpuPct: Double?
+    let rxBps: Double?
+    let txBps: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case cpuPct = "cpu_pct"
+        case gpuPct = "gpu_pct"
+        case rxBps = "rx_bps"
+        case txBps = "tx_bps"
+    }
+}
+
+struct StatusMemory: Codable, Sendable {
+    let freeGB: Double?
+    let usedGB: Double?
+    let totalGB: Double?
+    let pressure: String?
+
+    enum CodingKeys: String, CodingKey {
+        case pressure
+        case freeGB = "free_gb"
+        case usedGB = "used_gb"
+        case totalGB = "total_gb"
+    }
+}
+
+struct EngineEntry: Codable, Sendable, Identifiable {
+    let model: String?
+    let node: String?
+    let port: Int?
+    let split: Bool?
+
+    var id: String { "\(model ?? "?")@\(node ?? "?")" }
+    var displayName: String { model ?? "?" }
+    var displayNode: String { node ?? "?" }
+    var isSplit: Bool { split ?? false }
 }
 
 struct EventEntry: Codable, Sendable, Identifiable {

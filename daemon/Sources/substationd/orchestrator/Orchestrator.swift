@@ -341,7 +341,7 @@ public struct Orchestrator: Sendable {
                 throw EngineError.notFound("no catalog model for tier \(tier)")
             }
             if first.ctx < needCtx {
-                try? await events.publish("context.warning", [
+                try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
                     ("id", .string(requestId)), ("model", .string(first.name)),
                     ("ctx", .jInt(first.ctx)), ("need", .jInt(needCtx)),
                     ("reason", .string("no_model_fits_widest_used")),
@@ -352,14 +352,14 @@ public struct Orchestrator: Sendable {
         if let current = cfg.model(modelName), current.ctx < needCtx {
             let fits = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }.filter { $0.ctx >= needCtx }
             if let alt = fits.first {
-                try? await events.publish("context.warning", [
+                try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
                     ("id", .string(requestId)), ("from", .string(modelName)), ("to", .string(alt.name)),
                     ("ctx", .jInt(alt.ctx)), ("need", .jInt(needCtx)),
                     ("reason", .string("pinned_model_window_too_small")),
                 ])
                 modelName = alt.name
             } else if let widest = (cfg.tiers[tier] ?? []).compactMap({ cfg.model($0) }).max(by: { $0.ctx < $1.ctx }) {
-                try? await events.publish("context.warning", [
+                try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
                     ("id", .string(requestId)), ("model", .string(widest.name)),
                     ("ctx", .jInt(widest.ctx)), ("need", .jInt(needCtx)),
                     ("reason", .string("no_model_fits_widest_used")),
@@ -386,7 +386,7 @@ public struct Orchestrator: Sendable {
                     if let alt = await bestLocalFit(cfg: cfg, preferTier: tier) {
                         finalCatalog = alt
                         placement = .local
-                        try? await events.publish("resource.warning", [
+                        try? await events.publishDeduped("resource.warning", key: "resource.warning:\(requested.name)", [
                             ("model", .string(requested.name)), ("node", .string(id)),
                             ("reason", .string("rpc_resources_insufficient")),
                             ("need_gb", .jDouble((need * 100).rounded() / 100)),
@@ -412,7 +412,7 @@ public struct Orchestrator: Sendable {
                 if shortfall, let alt = await bestLocalFit(cfg: cfg, preferTier: tier) {
                     finalCatalog = alt
                     placement = .local
-                    try? await events.publish("resource.warning", [
+                    try? await events.publishDeduped("resource.warning", key: "resource.warning:\(requested.name)", [
                         ("model", .string(requested.name)), ("node", .string(ids.first ?? "?")),
                         ("reason", .string("rpc_resources_insufficient")),
                         ("need_per_node_gb", .jDouble((perNode * 100).rounded() / 100)),

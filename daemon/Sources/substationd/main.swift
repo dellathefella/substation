@@ -118,23 +118,48 @@ try await app.asyncShutdown()
 
 // MARK: - Background loops
 
+struct NodeHealthSig: Equatable {
+    var healthy: Bool
+    var ramBucket: Int      // 0.5 GB buckets — noise below this never re-emits
+    var rpcUp: Bool
+    var runners: Int
+}
+
 func startHeartbeat(_ kit: Kit) {
     Task.detached(priority: .utility) {
+        var sigs: [String: NodeHealthSig] = [:]
+        var lastEmit: [String: Double] = [:]
         while !Task.isCancelled {
             let cfg = await kit.cfg.snapshot
             try? await Task.sleep(for: .milliseconds(max(500, cfg.heartbeatMs)))
             guard cfg.clusterEnabled else { continue }
+            let now = Date().timeIntervalSince1970
             for n in await kit.nodes.allNodes() {
                 let url = "http://\(n.ip):\(n.agentPort)/api/node/health"
+                var sig = NodeHealthSig(healthy: false, ramBucket: -1, rpcUp: false, runners: 0)
+                var data: [String: JSONValue] = [:]
                 if let (status, val) = try? await kit.client.json(method: "GET", url: url, bearer: cfg.authToken, timeout: 3),
                    status == 200
                 {
                     await kit.nodes.setHealth(id: n.id, healthy: true, health: val)
-                    var data = val?.objectValue ?? [:]
-                    data["node"] = .string(n.id)
-                    await kit.events.publish("node.health", .object(data))
+                    let ram = val?["ram_used_gb"]?.doubleValue ?? 0
+                    sig = NodeHealthSig(
+                        healthy: true,
+                        ramBucket: Int(ram * 2),
+                        rpcUp: val?["rpc_up"]?.boolValue ?? false,
+                        runners: val?["runners"]?.arrayValue?.count ?? 0
+                    )
+                    data = val?.objectValue ?? [:]
                 } else {
                     await kit.nodes.setHealth(id: n.id, healthy: false, health: nil)
+                }
+                data["node"] = .string(n.id)
+                data["healthy"] = .bool(sig.healthy)
+                // Feed hygiene: emit on meaningful change, refresh at 15 s max.
+                if sigs[n.id] != sig || now - (lastEmit[n.id] ?? 0) > 15 {
+                    sigs[n.id] = sig
+                    lastEmit[n.id] = now
+                    await kit.events.publish("node.health", .object(data))
                 }
             }
         }
@@ -199,11 +224,11 @@ func startHealLoop(_ kit: Kit) {
                     await kit.events.publish("cluster.healed", .object([
                         "node": .string(node.id), "link": link,
                     ]))
-                } else if !healthy && !wasDown {
+                } else if !healthy {
                     down[node.id] = true
-                    await kit.events.publish("cluster.warning", .object([
+                    await kit.events.publishDeduped("cluster.warning", key: "cluster.warning:\(node.id)", .object([
                         "node": .string(node.id), "reason": .string("node_unreachable"),
-                    ]))
+                    ]), cooldown: 60)
                 }
             }
         }

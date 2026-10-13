@@ -2249,3 +2249,162 @@ code {
   display: block;
   filter: drop-shadow(0 0 6px rgba(141, 135, 236, 0.45));
 }
+
+/* ---------- cost panel ---------- */
+
+.cost-wrap {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1060px;
+  margin: 0 auto;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.cost-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.cost-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cost-card-ok { border-color: rgba(74, 222, 128, 0.4); }
+
+.cost-card .cc-k {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx-faint);
+}
+
+.cost-card .cc-v {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--tx);
+}
+
+.cost-card-ok .cc-v { color: #4ade80; }
+
+.cost-card .cc-s { font-size: 10.5px; color: var(--tx-dim); }
+
+.cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cost-table th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--tx-faint);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cost-table th.num, .cost-table td.num { text-align: right; }
+
+.cost-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+
+.cost-tier {
+  margin-left: 7px;
+  font-size: 9.5px;
+  color: var(--tx-faint);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.cost-table select,
+.cost-custom input,
+.cost-watts,
+.cost-rate {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx);
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.cost-custom input { width: 74px; margin-left: 5px; }
+.cost-watts { width: 62px; text-align: right; }
+.cost-rate { width: 64px; }
+
+.cost-cloud { color: #f0abfc; font-family: var(--mono); }
+.cost-local { color: #8d87ec; font-family: var(--mono); }
+
+.cost-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .cost-grid { grid-template-columns: 1fr; }
+}
+
+.cost-blend {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 5px 2px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+
+.cost-blend-k { color: var(--tx-dim); }
+.cost-blend-v { font-family: var(--mono); color: var(--tx); }
+
+.cost-hours {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 84px;
+  padding-top: 6px;
+}
+
+.cost-hour {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.cost-hour-bar {
+  width: 100%;
+  background: linear-gradient(180deg, #8d87ec, #4c4aa8);
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+}
+
+.cost-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  padding-bottom: 8px;
+}

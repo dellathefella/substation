@@ -97,6 +97,15 @@ struct DaemonClient: Sendable {
     @discardableResult
     func adminReload() async -> Bool { await post("/api/admin/reload") }
 
+    @discardableResult
+    func restartEngine(_ name: String) async -> Bool {
+        let enc = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        return await post("/api/models/\(enc)/restart")
+    }
+
+    @discardableResult
+    func restartAllEngines() async -> Bool { await post("/api/engines/restart-all") }
+
     private func post(_ path: String) async -> Bool {
         await fetchData(path, method: "POST") != nil
     }

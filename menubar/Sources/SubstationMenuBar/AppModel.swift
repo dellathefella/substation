@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var models: [ModelEntry] = []
     @Published private(set) var clusterEnabled: Bool = false
     @Published private(set) var offline: Bool = true
+    @Published private(set) var engines: [EngineEntry] = []
+    @Published private(set) var restarting: Set<String> = []
+    @Published private(set) var restartingAll: Bool = false
     @Published private(set) var lastUpdated: Date?
 
     @Published private(set) var baseURL: String
@@ -86,6 +89,7 @@ final class AppModel: ObservableObject {
         if !statusFailed { self.status = statusValue }
         if !metricsFailed { self.metrics = metricsValue }
         self.events = eventsValue
+        self.engines = statusValue?.engines ?? self.engines
         self.nodes = nodesValue
         self.models = modelsValue
         self.clusterEnabled = configValue?.clusterEnabled ?? self.clusterEnabled
@@ -122,6 +126,32 @@ final class AppModel: ObservableObject {
             _ = await client.adminReload()
             await self.refresh()
         }
+    }
+
+    func restartEngine(_ name: String) {
+        guard !restarting.contains(name) else { return }
+        restarting.insert(name)
+        let client = self.client
+        Task {
+            _ = await client.restartEngine(name)
+            self.restarting.remove(name)
+            await self.refresh()
+        }
+    }
+
+    func restartAllEngines() {
+        guard !restartingAll else { return }
+        restartingAll = true
+        let client = self.client
+        Task {
+            _ = await client.restartAllEngines()
+            self.restartingAll = false
+            await self.refresh()
+        }
+    }
+
+    func tokS(for model: String) -> Double? {
+        metrics?.byKey?["tok_s.\(model)"]?.p50
     }
 
     // MARK: Formatting helpers

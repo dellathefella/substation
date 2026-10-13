@@ -333,6 +333,43 @@ public enum Routes {
             return jsonResponse(.object(["unloaded": .bool(true), "model": .string(name)]))
         }
 
+        // Restart a loaded engine in place (kill + respawn same placement).
+        app.on(.POST, "api", "models", ":name", "restart", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let name = req.parameters.get("name") ?? ""
+            let cfg = await kit.cfg.snapshot
+            let mine = await kit.engines.listLive().filter { $0.model == name }
+            guard !mine.isEmpty else {
+                return jsonResponse(.object(["error": .object(["message": .string("\(name) is not loaded"), "code": .string("not_loaded")])]), status: .notFound)
+            }
+            var done: [String] = []
+            for e in mine {
+                if await kit.engines.respawn(e, cfg: cfg) { done.append(e.node) }
+            }
+            let nodesJSON: [JSONValue] = done.map { JSONValue.string($0) }
+            try? await kit.events.publish("engine.restarted", .object([
+                "model": JSONValue.string(name), "nodes": JSONValue.array(nodesJSON),
+            ]))
+            return jsonResponse(.object([
+                "restarted": .bool(!done.isEmpty), "model": .string(name), "nodes": JSONValue.array(nodesJSON),
+            ]))
+        }
+
+        app.on(.POST, "api", "engines", "restart-all", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let cfg = await kit.cfg.snapshot
+            let live = await kit.engines.listLive()
+            var done: [String] = []
+            for e in live {
+                if await kit.engines.respawn(e, cfg: cfg) { done.append("\(e.model)@\(e.node)") }
+            }
+            let enginesJSON: [JSONValue] = done.map { JSONValue.string($0) }
+            try? await kit.events.publish("engine.restarted", .object([
+                "all": JSONValue.bool(true), "engines": JSONValue.array(enginesJSON),
+            ]))
+            return jsonResponse(.object(["restarted": .jInt(done.count), "engines": JSONValue.array(enginesJSON)]))
+        }
+
         // Preflight memory estimate for a catalog model (warn before load).
         app.get("api", "models", ":name", "estimate") { req async throws -> Response in
             try await auth(req, kit)
@@ -535,7 +572,7 @@ public enum Routes {
             let up: Bool
             if start { up = await kit.engines.startRPCSelf(await kit.cfg.snapshot) }
             else { await kit.engines.stopRPCSelf(); up = false }
-            return jsonResponse(.object(["rpc_up": .bool(up)]), status: up ? .ok : .serviceUnavailable)
+            return jsonResponse(.object(["rpc_up": .bool(up)]), status: (!start || up) ? .ok : .serviceUnavailable)
         }
 
         app.on(.POST, "api", "cluster", "rpc-peer", body: .collect(maxSize: "1mb")) { req async throws -> Response in

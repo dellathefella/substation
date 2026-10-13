@@ -5,14 +5,6 @@ controller_id = "local"
 enabled = true
 heartbeat_ms = 2000.0
 
-[nodes]
-
-[nodes.studio0]
-agent_port = 8801.0
-host = "192.168.7.248"
-rpc_port = 50052.0
-total_ram_gb = 256.0
-
 [daemon]
 auth_token = ""
 bind = "0.0.0.0"
@@ -39,6 +31,14 @@ ws_tick_batch_ms = 250.0
 [node]
 agent_port = 8801.0
 rpc_port = 50052.0
+
+[nodes]
+
+[nodes.studio0]
+agent_port = 8801.0
+host = "192.168.7.248"
+rpc_port = 50052.0
+total_ram_gb = 256.0
 
 [orchestrator]
 cache_enabled = true

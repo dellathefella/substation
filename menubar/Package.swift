@@ -8,7 +8,8 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "SubstationMenuBar"
+            name: "SubstationMenuBar",
+            resources: [.copy("Resources/substation.svg")]
         )
     ]
 )
