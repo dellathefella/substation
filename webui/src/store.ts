@@ -73,6 +73,7 @@ export interface DashboardStore {
   applyFrames(frames: readonly WsFrame[]): void;
   replaceConfig(config: RuntimeConfig | null): void;
   patchConfigLocal(patch: ConfigPatch): void;
+  removeNodeLocal(id: string): void;
   pushToast(level: Toast['level'], title: string, msg?: string): void;
   dismissToast(id: number): void;
   setJoinCode(j: JoinCodeInfo | null): void;
@@ -218,6 +219,11 @@ export const useStore = create<DashboardStore>()((set, get) => ({
   replaceConfig: (config) => set({ config: config ?? get().config }),
 
   patchConfigLocal: (patch) => set({ config: mergeConfigPatch(get().config, patch) }),
+  removeNodeLocal: (id) => {
+    const nodes = { ...get().nodes };
+    delete nodes[id];
+    set({ nodes });
+  },
 
   pushToast: (level, title, msg) => {
     const t: Toast = { id: toastSeq++, level, title, msg, ts: Date.now() };

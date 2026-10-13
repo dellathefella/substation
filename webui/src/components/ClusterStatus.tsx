@@ -63,6 +63,8 @@ function NodeCard(props: {
   now: number;
   rpcBusy?: boolean;
   onRpc?: (id: string, start: boolean) => Promise<void>;
+  removeBusy?: boolean;
+  onRemove?: (id: string) => Promise<void>;
 }): React.JSX.Element {
   const { node, peer } = props;
   const age = props.now - node.ts;
@@ -85,6 +87,20 @@ function NodeCard(props: {
         {props.onRpc ? (
           <button className="btn btn-sm nc-rpc" disabled={props.rpcBusy} onClick={() => void props.onRpc?.(node.node, node.rpc_up === false)}>
             {node.rpc_up === false ? 'RPC ▶' : 'RPC ⏹'}
+          </button>
+        ) : null}
+        {props.onRemove ? (
+          <button
+            className="btn btn-sm nc-remove"
+            title={`remove ${node.node} from the cluster`}
+            disabled={props.removeBusy}
+            onClick={() => {
+              if (window.confirm(`Remove ${node.node} from the cluster? Its engines will be untracked and it will need to rejoin.`)) {
+                void props.onRemove?.(node.node);
+              }
+            }}
+          >
+            ✕
           </button>
         ) : null}
       </div>
@@ -119,6 +135,7 @@ export function ClusterStatus(): React.JSX.Element {
   const [apiNodes, setApiNodes] = useState<NodeHealth[]>([]);
   const [busy, setBusy] = useState(false);
   const [rpcBusy, setRpcBusy] = useState(false);
+  const [removeBusy, setRemoveBusy] = useState(false);
 
   const enabled = (live ?? storeStatus)?.cluster_enabled === true || config?.cluster?.enabled === true;
 
@@ -177,6 +194,19 @@ export function ClusterStatus(): React.JSX.Element {
     setRpcBusy(false);
     if (res.ok) pushToast('success', `rpc/${start ? 'start' : 'stop'} on ${id}`, 'worker acknowledged');
     else pushToast('error', `rpc toggle failed on ${id}`, String(res.status || 'daemon unreachable'));
+  };
+
+  const removeNode = async (id: string): Promise<void> => {
+    setRemoveBusy(true);
+    const res = await api.unjoin(id);
+    setRemoveBusy(false);
+    if (res.ok) {
+      setApiNodes((prev) => prev.filter((n) => n.node !== id));
+      useStore.getState().removeNodeLocal?.(id);
+      pushToast('success', `${id} removed from cluster`, 'it must rejoin with a join code to return');
+    } else {
+      pushToast('error', `remove failed for ${id}`, String(res.status || 'daemon unreachable'));
+    }
   };
 
   const peerFor = (node: string): DiscoveryPeer | undefined =>
@@ -248,7 +278,7 @@ export function ClusterStatus(): React.JSX.Element {
         ) : null}
         {nodeList.length === 0 ? <Empty text="no nodes joined yet" /> : null}
         {nodeList.map((n) => (
-          <NodeCard key={n.node} node={n} peer={peerFor(n.node)} now={now} rpcBusy={rpcBusy} onRpc={enabled ? rpcPeer : undefined} />
+          <NodeCard key={n.node} node={n} peer={peerFor(n.node)} now={now} rpcBusy={rpcBusy} onRpc={enabled ? rpcPeer : undefined} removeBusy={removeBusy} onRemove={enabled ? removeNode : undefined} />
         ))}
       </div>
       {enabled ? (

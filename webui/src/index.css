@@ -2095,6 +2095,16 @@ code {
   font-size: 10px;
 }
 
+.nc-remove {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #ff8a8a;
+  border-color: rgba(255, 120, 120, 0.35);
+}
+.nc-remove:hover {
+  background: rgba(255, 90, 90, 0.12);
+}
+
 /* ---------- dashboard node health strip ---------- */
 
 .health-strip {
