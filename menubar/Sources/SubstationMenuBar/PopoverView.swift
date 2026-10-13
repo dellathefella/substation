@@ -8,6 +8,7 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if model.offline { offlineBanner }
+            if model.routerDisabled { routerOffBanner }
             if model.degradedAuto { degradedBanner }
 
             statsRow
@@ -85,6 +86,25 @@ struct PopoverView: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
+    }
+
+    private var routerOffBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "circle.slash")
+                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Auto-router disabled")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Single-model mode — auto uses \(model.status?.defaultModel ?? "the only catalog model")")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.12)))
     }
 
     private var degradedBanner: some View {

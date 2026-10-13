@@ -56,7 +56,7 @@ let cache = ResponseCache()
 let state = DaemonState()
 let chat = ChatActor(dataDir: dataDir)
 let nodes = NodesActor(dataDir: dataDir + "/cluster")
-let engines = EngineActor(events: events, metrics: metrics, mem: mem)
+let engines = EngineActor(events: events, metrics: metrics, mem: mem, nodes: nodes)
 
 let snapshot = await cfg.snapshot
 await events.configure(ringSize: snapshot.eventRingSize)

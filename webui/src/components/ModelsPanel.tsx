@@ -85,6 +85,22 @@ function ModelCardView(props: { name: string }): React.JSX.Element {
             </span>
           </div>
         ) : null}
+        {card.placement && card.placement !== 'local' ? (
+          <div className="mc-cell">
+            <span className="mc-k">profile</span>
+            <span className="mc-v mc-peers" title={card.placement}>
+              {card.placement}
+            </span>
+          </div>
+        ) : null}
+        {card.flags && card.flags.length > 0 ? (
+          <div className="mc-cell">
+            <span className="mc-k">flags</span>
+            <span className="mc-v mc-peers" title={card.flags.join(' ')}>
+              {card.flags.length}
+            </span>
+          </div>
+        ) : null}
       </div>
       <button
         className={`btn mc-btn ${card.state === 'loaded' ? 'btn-danger' : 'btn-primary'}`}

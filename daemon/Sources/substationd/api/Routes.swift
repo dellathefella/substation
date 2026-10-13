@@ -70,7 +70,9 @@ public enum Routes {
                     "object": .string("model"),
                     "owned_by": .string("substation-virtual"),
                     "substation": .object([
-                        "auto_available": .bool(name != "auto" || autoOK),
+                        "auto_available": .bool(!cfg.orchestratorEnabled || name != "auto" || autoOK),
+                        "auto_router": .string(cfg.orchestratorEnabled ? "enabled" : "disabled"),
+                        "single_model": Orchestrator.defaultModelName(cfg).map { JSONValue.string($0) } ?? .null,
                         "orchestrator_up": .bool(orchUp),
                         "triage_model_present": .bool(FileManager.default.fileExists(atPath: cfg.triageGguf)),
                     ]),
@@ -123,7 +125,7 @@ public enum Routes {
             if mem.freeGB < cfg.minFreeRamGB || ramUsed > gpuLimit { pressure = "critical" }
             else if mem.freeGB < cfg.minFreeRamGB * 2 { pressure = "warn" }
             else { pressure = "ok" }
-            return jsonResponse(.object([
+            var obj: [String: JSONValue] = [
                 "state": .string(state),
                 "uptime_s": .jDouble((uptime * 10).rounded() / 10),
                 "requests_active": .jInt(activeReq),
@@ -132,28 +134,30 @@ public enum Routes {
                 "tokens_per_sec": .jDouble((tps * 10).rounded() / 10),
                 "models_loaded": .jInt(engines.count),
                 "models_total": .jInt(cfg.models.count),
-                "memory": .object([
-                    "free_gb": .jDouble((mem.freeGB * 100).rounded() / 100),
-                    "used_gb": .jDouble((ramUsed * 100).rounded() / 100),
-                    "total_gb": .jDouble((mem.totalGB * 100).rounded() / 100),
-                    "min_free_gb": .jDouble(cfg.minFreeRamGB),
-                    "resident_gb": .jDouble((resident * 100).rounded() / 100),
-                    "gpu_wired_limit_gb": .jDouble((gpuLimit * 100).rounded() / 100),
-                    "pressure": .string(pressure),
-                ]),
-                "cluster_enabled": .bool(cfg.clusterEnabled),
-                "auto_available": .bool(Orchestrator.defaultModelName(cfg) != nil),
-                "orchestrator_up": .bool(await kit.engines.orchestratorReady(cfg: cfg)),
-                "default_model": Orchestrator.defaultModelName(cfg).map { JSONValue.string($0) } ?? .null,
-                "engines": .array(engines.map { e in
-                    .object([
-                        "model": .string(e.model), "node": .string(e.node), "port": .jInt(e.port),
-                        "split": .bool(e.split), "rpc_peers": .array(e.rpcPeers.map { JSONValue.string($0) }),
-                    ])
-                }),
-                "nodes": await kit.nodes.nodesJSON(),
-                "version": .string(version),
-            ]))
+            ]
+            obj["memory"] = .object([
+                "free_gb": .jDouble((mem.freeGB * 100).rounded() / 100),
+                "used_gb": .jDouble((ramUsed * 100).rounded() / 100),
+                "total_gb": .jDouble((mem.totalGB * 100).rounded() / 100),
+                "min_free_gb": .jDouble(cfg.minFreeRamGB),
+                "resident_gb": .jDouble((resident * 100).rounded() / 100),
+                "gpu_wired_limit_gb": .jDouble((gpuLimit * 100).rounded() / 100),
+                "pressure": .string(pressure),
+            ])
+            obj["cluster_enabled"] = .bool(cfg.clusterEnabled)
+            obj["auto_router"] = .string(cfg.orchestratorEnabled ? "enabled" : "disabled")
+            obj["auto_available"] = .bool(!cfg.orchestratorEnabled || Orchestrator.defaultModelName(cfg) != nil)
+            obj["orchestrator_up"] = .bool(await kit.engines.orchestratorReady(cfg: cfg))
+            obj["default_model"] = Orchestrator.defaultModelName(cfg).map { JSONValue.string($0) } ?? .null
+            obj["engines"] = .array(engines.map { e in
+                .object([
+                    "model": .string(e.model), "node": .string(e.node), "port": .jInt(e.port),
+                    "split": .bool(e.split), "rpc_peers": .array(e.rpcPeers.map { JSONValue.string($0) }),
+                ])
+            })
+            obj["nodes"] = await kit.nodes.nodesJSON()
+            obj["version"] = .string(version)
+            return jsonResponse(.object(obj))
         }
 
         app.get("api", "metrics") { req async throws -> Response in
@@ -212,7 +216,8 @@ public enum Routes {
                     "ctx": .jInt(m.ctx),
                     "placement": .string(m.placement),
                     "loaded": .bool(engine != nil),
-                    "node": engine.map { JSONValue.string($0.node) } ?? .null,
+                    "node": engine.map { JSONValue.string($0.node) } ?? (m.node.map { JSONValue.string($0) } ?? .null),
+                    "flags": .array(m.flags.map { JSONValue.string($0) }),
                     "port": engine.map { JSONValue.jInt($0.port) } ?? .null,
                 ])
             }))

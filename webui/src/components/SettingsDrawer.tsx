@@ -17,6 +17,7 @@ const SECTIONS: { title: string; fields: readonly Field[] }[] = [
   {
     title: 'Orchestrator',
     fields: [
+      { path: 'orchestrator.enabled', label: 'Auto-router enabled (off = single-model mode)', type: 'bool' },
       { path: 'orchestrator.triage_timeout_ms', label: 'Triage timeout', type: 'number', hint: 'ms' },
       { path: 'orchestrator.triage_upgrade_confidence', label: 'Upgrade confidence', type: 'number', step: 0.05, hint: '0..1' },
       { path: 'orchestrator.idle_load_only', label: 'Start with triage only (lazy-load tiers)', type: 'bool' },

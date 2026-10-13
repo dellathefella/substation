@@ -17,6 +17,10 @@ public enum ConfigDefaults {
     heartbeat_ms = 2000
 
     [orchestrator]
+    # Auto-router: triage model classifies each request into fast/balanced/smart.
+    # Set false to disable routing: every auto/auto-fast/auto-smart request then
+    # goes to default_model (or the only catalog model) — single-model mode.
+    enabled = true
     triage_gguf = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
     triage_port = 8931
     triage_timeout_ms = 400
@@ -45,6 +49,11 @@ public enum ConfigDefaults {
     event_ring_size = 2000
     ws_tick_batch_ms = 250
 
+    # Model profile: node = home for non-RPC models (exactly one node, e.g.
+    # node = "studio0"). placement = "local" | "node:<id>" | "split[:id+id…]".
+    # A bare "split" RPC profile spans the head plus every eligible joined
+    # node; weights stream head→workers over RPC without worker-side caching.
+    # flags = extra llama-server arguments appended verbatim.
     [[models]]
     name = "qwen2.5-1.5b"
     gguf = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
@@ -52,6 +61,8 @@ public enum ConfigDefaults {
     size_gb = 1.1
     ctx = 4096
     placement = "local"
+    # node = "local"
+    # flags = ["--no-mmap", "--flash-attn"]
 
     [[models]]
     name = "qwen2.5-7b"

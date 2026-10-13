@@ -43,6 +43,7 @@ public actor EngineActor {
     private let events: EventActor
     private let metrics: MetricsActor
     private let mem: Memory
+    private let nodes: NodesActor
     private let client = EngineClient()
     private let sleepGuard = SleepGuard()
 
@@ -52,10 +53,11 @@ public actor EngineActor {
         sleepGuard.setActive(live.contains { $0.pid > 0 })
     }
 
-    public init(events: EventActor, metrics: MetricsActor, mem: Memory) {
+    public init(events: EventActor, metrics: MetricsActor, mem: Memory, nodes: NodesActor) {
         self.events = events
         self.metrics = metrics
         self.mem = mem
+        self.nodes = nodes
     }
 
     // MARK: - Spawning
@@ -138,7 +140,20 @@ public actor EngineActor {
             (node, splitPeers, isSplit) = ("local", [], false)
         case .node(let n):
             (node, splitPeers, isSplit) = (cfg.clusterEnabled ? n : "local", [], false)
-        case .split(let ids):
+        case .split(var ids):
+            // RPC profile: head + peers. "split" with no explicit ids →
+            // local head + every eligible joined node. Weights are streamed
+            // over RPC head→workers; worker rpc-servers run WITHOUT cache.
+            if cfg.clusterEnabled {
+                let joined = await nodes.allNodes()
+                if ids.isEmpty { ids = ["local"] + joined.filter { $0.healthy }.map(\.id) }
+                var eligible: [String] = []
+                for id in ids {
+                    if id == "local" || id == "self" { eligible.append(id); continue }
+                    if let n = await nodes.node(id), n.healthy { eligible.append(id) }
+                }
+                ids = eligible
+            }
             if cfg.clusterEnabled, ids.count > 1 {
                 (node, splitPeers, isSplit) = (ids[0], Array(ids.dropFirst()), true)
             } else {

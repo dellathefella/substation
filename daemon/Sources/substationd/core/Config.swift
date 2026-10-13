@@ -12,6 +12,8 @@ public struct CatalogModel: Sendable, Hashable {
     public var sizeGB: Double
     public var ctx: Int
     public var placement: String
+    /// Node this model resides on (joins placement when placement is unset).
+    public var node: String?
     public var flags: [String]
     /// KV-cache estimate: MB per 1k context tokens per parallel slot.
     /// 0 → estimator default (100 MB/1k/slot).
@@ -45,6 +47,7 @@ public struct ConfigSnapshot: Sendable {
     public var heartbeatMs: Int { tree["cluster"]?["heartbeat_ms"]?.intValue ?? 2000 }
     public var probeBytesMB: Int { tree["cluster"]?["probe_bytes_mb"]?.intValue ?? 16 }
 
+    public var orchestratorEnabled: Bool { tree["orchestrator"]?["enabled"]?.boolValue ?? true }
     public var triageGguf: String { ConfigSnapshot.expandPath(tree["orchestrator"]?["triage_gguf"]?.stringValue ?? "") }
     public var triagePort: Int { tree["orchestrator"]?["triage_port"]?.intValue ?? 8931 }
     public var triageTimeoutMs: Int { tree["orchestrator"]?["triage_timeout_ms"]?.intValue ?? 250 }
@@ -118,7 +121,9 @@ public struct ConfigSnapshot: Sendable {
                 tier: m["tier"]?.stringValue ?? "balanced",
                 sizeGB: m["size_gb"]?.doubleValue ?? 4,
                 ctx: m["ctx"]?.intValue ?? defaultCtx,
-                placement: m["placement"]?.stringValue ?? "local",
+                placement: m["placement"]?.stringValue
+                    ?? (m["node"]?.stringValue.map { $0.isEmpty || $0 == "local" ? "local" : "node:\($0)" } ?? "local"),
+                node: m["node"]?.stringValue,
                 flags: m["flags"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
                 kvMBPer1k: m["kv_mb_per_1k_ctx"]?.doubleValue ?? 0,
                 slots: m["parallel_slots"]?.intValue ?? 4

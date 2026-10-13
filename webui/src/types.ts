@@ -48,6 +48,8 @@ export interface ModelCard {
   name: string;
   state: 'loaded' | 'loading' | 'unloaded';
   node?: string;
+  placement?: string;
+  flags?: string[];
   size_gb?: number;
   ctx?: number;
   split?: boolean;
@@ -106,6 +108,7 @@ export interface RuntimeConfig {
     webui_dist?: string;
   };
   orchestrator?: {
+    enabled?: boolean;
     triage_gguf?: string;
     triage_port?: number;
     triage_timeout_ms?: number;
@@ -127,7 +130,16 @@ export interface RuntimeConfig {
     min_free_ram_gb?: number;
     startup_timeout_s?: number;
   };
-  models?: { name: string; tier?: string; size_gb?: number; ctx?: number; placement?: string; gguf?: string }[];
+  models?: {
+    name: string;
+    tier?: string;
+    size_gb?: number;
+    ctx?: number;
+    placement?: string;
+    node?: string;
+    flags?: string[];
+    gguf?: string;
+  }[];
 }
 
 export type ConfigPatch = { [key: string]: string | number | boolean | ConfigPatch };

@@ -156,6 +156,36 @@ public struct Orchestrator: Sendable {
 
         let userText = Self.lastUserText(messages)
 
+        // Auto-router disabled → single fixed model mode: every auto* request
+        // goes straight to the default model (no triage, no tiers, no sticky).
+        if !cfg.orchestratorEnabled {
+            guard let d = Self.defaultModelName(cfg) ?? cfg.models.first?.name else {
+                throw APIError.noModelLoaded("Auto-router is disabled and the catalog is empty; define a model or set orchestrator.default_model.")
+            }
+            let catalog = cfg.model(d)
+            var placement = Placement.parse(catalog?.placement ?? "local")
+            if !cfg.clusterEnabled { placement = .local }
+            let queueWait = await admission.acquire()
+            let engine: RunningEngine
+            do {
+                engine = try await engines.ensureLoaded(catalog ?? cfg.models[0], placement: placement, cfg: cfg)
+            } catch {
+                await admission.release()
+                throw error
+            }
+            try? await events.publish("router.disabled", [
+                ("id", .string(requestId)), ("model", .string(d)), ("node", .string(engine.node)),
+            ])
+            var splitPeers: [String] = []
+            if case .split(let ids) = placement, ids.count > 1 { splitPeers = Array(ids.dropFirst()) }
+            return RouteInfo(
+                requestId: requestId, virtualModel: virtual, tier: "single", confidence: 1,
+                method: "router_disabled", model: d, node: engine.node, split: engine.split,
+                rpcPeers: splitPeers, reason: "router_disabled single_model:\(d)",
+                engine: engine, sticky: false, waitedQueueMs: queueWait, waitedLoadingMs: 0
+            )
+        }
+
         // Orchestrator availability + fallback cascade:
         //   auto + triage present   → model triage (real intelligence/speed routing)
         //   auto + triage missing   → default model (config default_model → smallest catalog model)
@@ -275,25 +305,29 @@ public struct Orchestrator: Sendable {
                     }
                 }
             }
-        case .split(let ids) where ids.count > 1:
-            let perNode = ResourceEstimator.splitPerNodeGB(weightsGB: requested.sizeGB, ctx: requested.ctx,
-                                                           slots: requested.slots, nodeCount: ids.count)
-            var shortfall = false
-            if ids.first == "local" || ids.first == "self" {
-                if (await mem.read()).freeGB < perNode { shortfall = true }
-            } else if let f = await nodes.freeGB(ids[0]), f < perNode { shortfall = true }
-            for peer in ids.dropFirst() {
-                if let f = await nodes.freeGB(peer), f < perNode { shortfall = true }
-            }
-            if shortfall, let alt = await bestLocalFit(cfg: cfg, preferTier: tier) {
-                finalCatalog = alt
-                placement = .local
-                try? await events.publish("resource.warning", [
-                    ("model", .string(requested.name)), ("node", .string(ids.first ?? "?")),
-                    ("reason", .string("rpc_resources_insufficient")),
-                    ("need_per_node_gb", .jDouble((perNode * 100).rounded() / 100)),
-                    ("fallback", .string(alt.name)),
-                ])
+        case .split(let explicitIds):
+            var ids = explicitIds
+            if ids.isEmpty { ids = ["local"] + (await nodes.allNodes()).filter { $0.healthy }.map(\.id) }
+            if ids.count > 1 {
+                let perNode = ResourceEstimator.splitPerNodeGB(weightsGB: requested.sizeGB, ctx: requested.ctx,
+                                                               slots: requested.slots, nodeCount: ids.count)
+                var shortfall = false
+                if ids.first == "local" || ids.first == "self" {
+                    if (await mem.read()).freeGB < perNode { shortfall = true }
+                } else if let f = await nodes.freeGB(ids[0]), f < perNode { shortfall = true }
+                for peer in ids.dropFirst() {
+                    if let f = await nodes.freeGB(peer), f < perNode { shortfall = true }
+                }
+                if shortfall, let alt = await bestLocalFit(cfg: cfg, preferTier: tier) {
+                    finalCatalog = alt
+                    placement = .local
+                    try? await events.publish("resource.warning", [
+                        ("model", .string(requested.name)), ("node", .string(ids.first ?? "?")),
+                        ("reason", .string("rpc_resources_insufficient")),
+                        ("need_per_node_gb", .jDouble((perNode * 100).rounded() / 100)),
+                        ("fallback", .string(alt.name)),
+                    ])
+                }
             }
         default:
             break

@@ -64,3 +64,28 @@ Substation does automatically, and exposes WHY via the dashboard.
 4. Model switching transparent to clients.
 5. Baseline: app runs standalone on studio0 and studio1.
 6. All options configurable via UI, CLI, and config file.
+
+## Auto-router switch (single-model mode)
+
+`orchestrator.enabled = false` disables triage/tiers/stickiness. Every
+`auto`/`auto-fast`/`auto-smart` request routes straight to
+`orchestrator.default_model` (or the only catalog model) with the usual
+placement + RPC resource checks; `/api/status` reports
+`auto_router:"disabled"` and the menu bar shows a neutral "Auto-router
+disabled" banner instead of the degraded warning. Toggle via WebUI
+Settings, `substationd admin config set orchestrator.enabled false`, or MCP.
+
+## Model profile (catalog) fields
+
+| field | meaning |
+|---|---|
+| `name` | catalog name (real model; hidden from clients) |
+| `gguf` or `dir`+`file` | weights path; `~` and `$VAR` expanded; any drive/network share |
+| `tier` | fast / balanced / smart |
+| `size_gb`, `ctx`, `kv_mb_per_1k_ctx`, `parallel_slots` | resource estimate inputs |
+| `node` | non-RPC home node — a non-RPC profile covers exactly ONE node (`node = "studio0"`) |
+| `placement` | `local` \| `node:<id>` \| `split[:id+id…]`; a bare `split` RPC profile spans the head plus every eligible (healthy, joined) node — one profile can cover 2+ nodes |
+| `flags` | extra llama-server arguments, appended verbatim (last flag wins) |
+
+RPC (`split:`) profiles stream weights head→workers over GGML RPC; worker
+`ggml-rpc-server`s run WITHOUT `-c`, so weights are never cached on workers.

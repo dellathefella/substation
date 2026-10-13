@@ -31,6 +31,7 @@ ws_tick_batch_ms = 250.0
 cache_enabled = true
 cache_max_entries = 256.0
 default_model = ""
+enabled = true
 idle_load_only = true
 triage_gguf = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 triage_port = 8931.0
