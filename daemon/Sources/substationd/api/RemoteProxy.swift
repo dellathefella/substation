@@ -135,6 +135,7 @@ extension ChatPipeline {
         ])
         return jsonResponse(.object(out), extra: [
             ("X-Substation-Request-Id", route.requestId), ("X-Substation-Tier", route.tier),
+            ("X-Substation-Model", route.model),
         ])
     }
 
@@ -183,6 +184,7 @@ extension ChatPipeline {
         headers.replaceOrAdd(name: .contentType, value: "text/event-stream")
         headers.replaceOrAdd(name: "X-Substation-Request-Id", value: route.requestId)
         headers.replaceOrAdd(name: "X-Substation-Tier", value: route.tier)
+        headers.replaceOrAdd(name: "X-Substation-Model", value: route.model)
         headers.replaceOrAdd(name: .cacheControl, value: "no-cache")
 
         let client = orch.client

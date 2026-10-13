@@ -214,7 +214,7 @@ public actor EngineActor {
                 "--alias", model.name,
                 "--host", "127.0.0.1",
                 "--port", String(port),
-                "-c", String(model.ctx),
+                "-c", String(model.ctx * 4),
                 "--cache-reuse", "256",
                 "--parallel", "4",
                 "--metrics",

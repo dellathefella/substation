@@ -24,7 +24,7 @@ webui_dist = "./webui/dist"
 
 [engines]
 base_port = 8940.0
-default_ctx = 8192.0
+default_ctx = 32768.0
 idle_evict_seconds = 900.0
 llama_server = "./third_party/llama.cpp/build/bin/llama-server"
 min_free_ram_gb = 8.0
@@ -66,7 +66,7 @@ desc = "Flagship Mac Studio serving (llama.cpp tracks)"
 models = ["qwen3.8-flash-next", "glm-5.3-flash", "glm-5.3-flash-rpc"]
 
 [[models]]
-ctx = 4096.0
+ctx = 32768.0
 gguf = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 name = "qwen2.5-1.5b"
 placement = "local"
@@ -74,7 +74,7 @@ size_gb = 1.1
 tier = "fast"
 
 [[models]]
-ctx = 4096.0
+ctx = 32768.0
 gguf = "models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
 name = "qwen2.5-7b"
 placement = "local"
@@ -83,7 +83,7 @@ tier = "balanced"
 
 [[models]]
 base_url = "http://192.168.7.248:8083"
-ctx = 262144.0
+ctx = 32768.0
 kind = "external"
 model = "qwen3.8-flash-next"
 name = "qwen3.8-flash-next"
@@ -93,7 +93,7 @@ tier = "smart"
 
 [[models]]
 base_url = "http://192.168.7.84:8081"
-ctx = 262144.0
+ctx = 32768.0
 kind = "external"
 model = "glm-5.3-flash"
 name = "glm-5.3-flash"
@@ -103,7 +103,7 @@ tier = "smart"
 
 [[models]]
 base_url = "http://192.168.7.84:8081"
-ctx = 262144.0
+ctx = 32768.0
 kind = "external"
 model = "glm-5.3-flash-rpc"
 name = "glm-5.3-flash-rpc"
@@ -113,7 +113,7 @@ tier = "smart"
 
 [[models]]
 base_url = "http://192.168.7.248:8088"
-ctx = 262144.0
+ctx = 32768.0
 kind = "external"
 model = "qwen3.8-27b"
 name = "qwen3.8-27b"
@@ -123,7 +123,7 @@ tier = "balanced"
 
 [[models]]
 base_url = "http://192.168.7.248:8087"
-ctx = 262144.0
+ctx = 32768.0
 kind = "external"
 model = "ornith-1.5-35b"
 name = "ornith-1.5-35b"
@@ -133,7 +133,7 @@ tier = "balanced"
 
 [[models]]
 base_url = "http://192.168.7.248:8082"
-ctx = 131072.0
+ctx = 32768.0
 kind = "external"
 model = "gpt-oss-20b"
 name = "gpt-oss-20b"
@@ -142,7 +142,7 @@ size_gb = 13.0
 tier = "fast"
 
 [[models]]
-ctx = 4096.0
+ctx = 32768.0
 gguf = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 name = "qwen2.5-1.5b-rpc"
 placement = "split:local+studio0"

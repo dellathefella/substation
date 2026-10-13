@@ -74,7 +74,8 @@ public struct ChatPipeline: Sendable {
         let route = try await orch.route(
             requestedModel: body["model"]?.stringValue,
             messages: body["messages"],
-            sessionKey: sessionKey
+            sessionKey: sessionKey,
+            maxTokens: body["max_tokens"]?.intValue ?? body["max_completion_tokens"]?.intValue
         )
         await orch.events.publish("request.received", [
             ("id", .string(route.requestId)),
@@ -105,6 +106,7 @@ public struct ChatPipeline: Sendable {
                 return jsonResponse(.object(v), extra: [
                     ("X-Substation-Request-Id", route.requestId),
                     ("X-Substation-Tier", route.tier),
+                    ("X-Substation-Model", route.model),
                 ])
             }
         }
@@ -177,6 +179,7 @@ public struct ChatPipeline: Sendable {
         return jsonResponse(.object(out), extra: [
             ("X-Substation-Request-Id", route.requestId),
             ("X-Substation-Tier", route.tier),
+            ("X-Substation-Model", route.model),
         ])
     }
 
@@ -196,7 +199,8 @@ public struct ChatPipeline: Sendable {
         let route = try await orch.route(
             requestedModel: body["model"]?.stringValue,
             messages: body["messages"],
-            sessionKey: sessionKey
+            sessionKey: sessionKey,
+            maxTokens: body["max_tokens"]?.intValue ?? body["max_completion_tokens"]?.intValue
         )
         await orch.events.publish("request.received", [
             ("id", .string(route.requestId)),
@@ -231,6 +235,7 @@ public struct ChatPipeline: Sendable {
         headers.replaceOrAdd(name: .contentType, value: "text/event-stream")
         headers.replaceOrAdd(name: "X-Substation-Request-Id", value: id)
         headers.replaceOrAdd(name: "X-Substation-Tier", value: tier)
+        headers.replaceOrAdd(name: "X-Substation-Model", value: model)
         headers.replaceOrAdd(name: .cacheControl, value: "no-cache")
 
         return Response(status: .ok, headers: headers, body: .init(asyncStream: { writer in

@@ -187,13 +187,19 @@ public struct Orchestrator: Sendable {
     public func route(
         requestedModel: String?,
         messages: JSONValue?,
-        sessionKey: String?
+        sessionKey: String?,
+        maxTokens: Int? = nil
     ) async throws -> RouteInfo {
         let cfg = await cfg.snapshot
         let requestId = "req-" + String(UUID().uuidString.prefix(8)).lowercased()
         let virtual = requestedModel?.isEmpty == false ? requestedModel! : "auto"
 
         let userText = Self.lastUserText(messages)
+        // Context guard budget: estimated prompt tokens over the WHOLE
+        // conversation (chars/4 heuristic) + requested output + slack.
+        // Sessions must never land on a model whose window is narrower
+        // than their history.
+        let needCtx = max(128, Self.historyChars(messages) / 4 + (maxTokens ?? 0) + 256)
 
         // Auto-router disabled → single fixed model mode: every auto* request
         // goes straight to the default model (no triage, no tiers, no sticky).
@@ -329,11 +335,37 @@ public struct Orchestrator: Sendable {
             }
         }
         if modelName.isEmpty || cfg.model(modelName) == nil {
-            let candidates = cfg.tiers[tier] ?? []
-            guard let first = candidates.first(where: { cfg.model($0) != nil }) else {
+            let candidates = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }
+            guard let first = candidates.first(where: { $0.ctx >= needCtx })
+                ?? candidates.max(by: { $0.ctx < $1.ctx }) else {
                 throw EngineError.notFound("no catalog model for tier \(tier)")
             }
-            modelName = first
+            if first.ctx < needCtx {
+                try? await events.publish("context.warning", [
+                    ("id", .string(requestId)), ("model", .string(first.name)),
+                    ("ctx", .jInt(first.ctx)), ("need", .jInt(needCtx)),
+                    ("reason", .string("no_model_fits_widest_used")),
+                ])
+            }
+            modelName = first.name
+        }
+        if let current = cfg.model(modelName), current.ctx < needCtx {
+            let fits = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }.filter { $0.ctx >= needCtx }
+            if let alt = fits.first {
+                try? await events.publish("context.warning", [
+                    ("id", .string(requestId)), ("from", .string(modelName)), ("to", .string(alt.name)),
+                    ("ctx", .jInt(alt.ctx)), ("need", .jInt(needCtx)),
+                    ("reason", .string("pinned_model_window_too_small")),
+                ])
+                modelName = alt.name
+            } else if let widest = (cfg.tiers[tier] ?? []).compactMap({ cfg.model($0) }).max(by: { $0.ctx < $1.ctx }) {
+                try? await events.publish("context.warning", [
+                    ("id", .string(requestId)), ("model", .string(widest.name)),
+                    ("ctx", .jInt(widest.ctx)), ("need", .jInt(needCtx)),
+                    ("reason", .string("no_model_fits_widest_used")),
+                ])
+                modelName = widest.name
+            }
         }
         guard let requested = cfg.model(modelName) else {
             throw EngineError.notFound("model \(modelName)")
@@ -493,6 +525,19 @@ public struct Orchestrator: Sendable {
             if m["role"]?.stringValue == "user", let c = m["content"]?.stringValue { return c }
         }
         return ""
+    }
+
+    static func historyChars(_ messages: JSONValue?) -> Int {
+        guard let arr = messages?.arrayValue else { return 0 }
+        var total = 0
+        for m in arr {
+            if let c = m["content"]?.stringValue {
+                total += c.count
+            } else if let parts = m["content"]?.arrayValue {
+                for p in parts { total += (p["text"]?.stringValue ?? "").count }
+            }
+        }
+        return total
     }
 }
 
