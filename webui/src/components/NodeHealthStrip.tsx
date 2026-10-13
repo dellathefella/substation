@@ -80,14 +80,17 @@ export function NodeHealthStrip(): React.JSX.Element | null {
           .sort((a, b) => a.node.localeCompare(b.node))
           .map((n) => ({
             name: n.node,
-            ramUsed: n.ram_used_gb,
-            ramTotal: n.ram_total_gb,
-            rpcUp: n.rpc_up,
-            healthy: true,
+            ramUsed: n.health?.ram_used_gb ?? n.ram_used_gb ?? 0,
+            ramTotal: n.health?.ram_total_gb ?? n.ram_total_gb ?? 0,
+            rpcUp: n.health?.rpc_up ?? n.rpc_up,
+            healthy: n.healthy ?? true,
             ts: n.ts,
-            cpu: undefined, gpu: undefined, rx: undefined, tx: undefined,
-            link: discovery.find((p) => p.node_id === n.node || p.name === n.node)?.link ?? null,
-            runners: n.runners.length,
+            cpu: n.health?.system?.cpu_pct,
+            gpu: n.health?.system?.gpu_pct,
+            rx: n.health?.system?.rx_bps,
+            tx: n.health?.system?.tx_bps,
+            link: n.link ?? discovery.find((p) => p.node_id === n.node || p.name === n.node)?.link ?? null,
+            runners: (n.health?.runners ?? n.runners ?? []).length,
           }));
   const pTone = mem?.pressure === 'critical' ? 'err' : mem?.pressure === 'warn' ? 'warn' : 'ok';
 

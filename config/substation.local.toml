@@ -2,12 +2,20 @@
 [cluster]
 auto_heal = true
 controller_id = "local"
-enabled = false
+enabled = true
 heartbeat_ms = 2000.0
+
+[nodes]
+
+[nodes.studio0]
+agent_port = 8801.0
+host = "192.168.7.248"
+rpc_port = 50052.0
+total_ram_gb = 256.0
 
 [daemon]
 auth_token = ""
-bind = "127.0.0.1"
+bind = "0.0.0.0"
 max_concurrent_requests = 8.0
 port = 8800.0
 session_stick_seconds = 300.0
@@ -46,13 +54,16 @@ triage_upgrade_confidence = 0.8
 [orchestrator.tiers]
 
 [orchestrator.tiers.balanced]
-models = ["qwen2.5-7b"]
+desc = "Mid-size coders (Studio0 llama.cpp tracks)"
+models = ["qwen2.5-7b", "qwen3.8-27b", "ornith-1.5-35b"]
 
 [orchestrator.tiers.fast]
-models = ["qwen2.5-1.5b"]
+desc = "Light & quick (local triage model; gpt-oss fallback on Studio0)"
+models = ["qwen2.5-1.5b", "gpt-oss-20b"]
 
 [orchestrator.tiers.smart]
-models = ["m3-ultra-flash"]
+desc = "Flagship Mac Studio serving (llama.cpp tracks)"
+models = ["qwen3.8-flash-next", "glm-5.3-flash", "glm-5.3-flash-rpc"]
 
 [[models]]
 ctx = 4096.0
@@ -72,8 +83,67 @@ tier = "balanced"
 
 [[models]]
 base_url = "http://192.168.7.248:8083"
+ctx = 262144.0
 kind = "external"
 model = "qwen3.8-flash-next"
-name = "m3-ultra-flash"
+name = "qwen3.8-flash-next"
 protocol = "openai"
+size_gb = 150.0
 tier = "smart"
+
+[[models]]
+base_url = "http://192.168.7.84:8081"
+ctx = 262144.0
+kind = "external"
+model = "glm-5.3-flash"
+name = "glm-5.3-flash"
+protocol = "openai"
+size_gb = 180.0
+tier = "smart"
+
+[[models]]
+base_url = "http://192.168.7.84:8081"
+ctx = 262144.0
+kind = "external"
+model = "glm-5.3-flash-rpc"
+name = "glm-5.3-flash-rpc"
+protocol = "openai"
+size_gb = 171.0
+tier = "smart"
+
+[[models]]
+base_url = "http://192.168.7.248:8088"
+ctx = 262144.0
+kind = "external"
+model = "qwen3.8-27b"
+name = "qwen3.8-27b"
+protocol = "openai"
+size_gb = 20.0
+tier = "balanced"
+
+[[models]]
+base_url = "http://192.168.7.248:8087"
+ctx = 262144.0
+kind = "external"
+model = "ornith-1.5-35b"
+name = "ornith-1.5-35b"
+protocol = "openai"
+size_gb = 36.0
+tier = "balanced"
+
+[[models]]
+base_url = "http://192.168.7.248:8082"
+ctx = 131072.0
+kind = "external"
+model = "gpt-oss-20b"
+name = "gpt-oss-20b"
+protocol = "openai"
+size_gb = 13.0
+tier = "fast"
+
+[[models]]
+ctx = 4096.0
+gguf = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+name = "qwen2.5-1.5b-rpc"
+placement = "split:local+studio0"
+size_gb = 1.1

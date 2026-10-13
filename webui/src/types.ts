@@ -11,14 +11,24 @@ export interface RunnerState {
 
 export interface NodeHealth {
   node: string;
-  ram_used_gb: number;
-  ram_total_gb: number;
-  gpu_pct: number;
-  runners: RunnerState[];
+  ram_used_gb?: number;
+  ram_total_gb?: number;
+  gpu_pct?: number;
+  runners?: RunnerState[];
   rpc_up?: boolean;
   rpc_ms_last?: number;
   tok_s?: number;
   ts: number;
+  healthy?: boolean;
+  link?: { kind?: string; rtt_ms?: number; mbps?: number; rdma?: boolean } | null;
+  health?: {
+    ram_used_gb?: number;
+    ram_total_gb?: number;
+    gpu_pct?: number;
+    rpc_up?: boolean;
+    runners?: RunnerState[];
+    system?: SystemStats;
+  } | null;
 }
 
 export interface LogFile {

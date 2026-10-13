@@ -21,7 +21,11 @@ function NodeCard(props: {
   const { node, peer } = props;
   const age = props.now - node.ts;
   const stale = age > 10_000;
-  const ramRatio = node.ram_total_gb > 0 ? node.ram_used_gb / node.ram_total_gb : 0;
+  const ramUsed = node.health?.ram_used_gb ?? node.ram_used_gb ?? 0;
+  const ramTotal = node.health?.ram_total_gb ?? node.ram_total_gb ?? 0;
+  const ramRatio = ramTotal > 0 ? ramUsed / ramTotal : 0;
+  const gpuPct = node.health?.gpu_pct ?? node.gpu_pct;
+  const runners = node.health?.runners ?? node.runners ?? [];
   const rdma = peer?.link?.rdma ?? false;
   const kind = peer?.link?.kind;
   return (
@@ -44,10 +48,10 @@ function NodeCard(props: {
         <div className="kv-row">
           <span className="kv-k">RAM</span>
           <span className="kv-v">
-            {fmtNum(node.ram_used_gb, 1)} / {fmtNum(node.ram_total_gb, 0)} GB · {(ramRatio * 100).toFixed(0)}%
+            {fmtNum(ramUsed, 1)} / {fmtNum(ramTotal, 0)} GB · {(ramRatio * 100).toFixed(0)}%
           </span>
         </div>
-        <Bar value={node.ram_used_gb} max={node.ram_total_gb} height={8} title="node RAM pressure" />
+        <Bar value={ramUsed} max={ramTotal} height={8} title="node RAM pressure" />
       </div>
       <div className="nc-link">
         <Pill tone={linkTone(kind)} title={`link kind: ${kind ?? 'unknown'}`}>
@@ -61,11 +65,11 @@ function NodeCard(props: {
           </span>
         ) : null}
         {node.rpc_ms_last !== undefined ? <span className="nc-metric">rpc {fmtNum(node.rpc_ms_last, 1)}ms</span> : null}
-        {node.gpu_pct !== undefined ? <span className="nc-metric">gpu {node.gpu_pct.toFixed(0)}%</span> : null}
+        {gpuPct !== undefined ? <span className="nc-metric">gpu {gpuPct.toFixed(0)}%</span> : null}
       </div>
-      {node.runners.length > 0 ? (
-        <div className="nc-runners" title={node.runners.map((r) => `${r.model}:${r.port} ${r.state}`).join('\n')}>
-          {node.runners.map((r) => (
+      {runners.length > 0 ? (
+        <div className="nc-runners" title={runners.map((r) => `${r.model}:${r.port} ${r.state}`).join('\n')}>
+          {runners.map((r) => (
             <span key={`${r.model}-${r.port}`} className="runner-chip">
               {truncate(r.model, 16)}
               {r.tok_s ? <span className="runner-tok">{fmtNum(r.tok_s, 0)}t/s</span> : null}
