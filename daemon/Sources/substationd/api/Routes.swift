@@ -41,7 +41,7 @@ public struct Kit: Sendable {
         self.pipeline = ChatPipeline(orch: Orchestrator(
             cfg: cfg, events: events, metrics: metrics, engines: engines,
             admission: admission, sessions: sessions, cache: cache, state: state,
-            usage: usage
+            usage: usage, mem: mem, nodes: nodes
         ))
     }
 }

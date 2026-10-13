@@ -48,6 +48,15 @@ public enum ResourceEstimator {
         return totalGB * 0.75
     }
 
+    /// Per-node memory budget for a model split across `nodeCount` nodes
+    /// (weights divided + per-node KV/overhead + headroom).
+    public static func splitPerNodeGB(weightsGB: Double, ctx: Int, slots: Int, nodeCount: Int) -> Double {
+        let n = max(1, nodeCount)
+        let kvPer1k = 100.0 / 1024.0
+        let kv = (Double(ctx) / 1024.0) * kvPer1k * Double(max(1, slots)) / Double(n)
+        return weightsGB / Double(n) + kv + 2.0
+    }
+
     public static func estimate(model m: CatalogModel, freeGB: Double, totalGB: Double,
                                 residentGB: Double, minFreeGB: Double) -> Estimate {
         let kvPer1k = (m.kvMBPer1k > 0 ? m.kvMBPer1k : 100.0) / 1024.0   // GB per 1k ctx per slot

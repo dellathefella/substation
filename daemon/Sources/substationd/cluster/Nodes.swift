@@ -111,6 +111,15 @@ public actor NodesActor {
 
     public func node(_ id: String) -> NodeEntry? { nodes[id] }
 
+    /// Free RAM (GB) on a joined node from its most recent health, if any.
+    public func freeGB(_ id: String) -> Double? {
+        guard let h = nodes[id]?.lastHealth else { return nil }
+        let total = h["ram_total_gb"]?.doubleValue ?? 0
+        let used = h["ram_used_gb"]?.doubleValue ?? 0
+        guard total > 0 else { return nil }
+        return max(0, total - used)
+    }
+
     public func nodesJSON() -> JSONValue {
         .array(nodes.values.sorted { $0.id < $1.id }.map { n in
             .object([

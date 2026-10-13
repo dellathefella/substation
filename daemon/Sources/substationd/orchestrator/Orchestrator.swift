@@ -37,11 +37,13 @@ public struct Orchestrator: Sendable {
     public let state: DaemonState
     public let client = EngineClient()
     public let usage: TokenUsage
+    public let mem: Memory
+    public let nodes: NodesActor
 
     public init(
         cfg: ConfigStore, events: EventActor, metrics: MetricsActor, engines: EngineActor,
         admission: Admission, sessions: SessionActor, cache: ResponseCache, state: DaemonState,
-        usage: TokenUsage
+        usage: TokenUsage, mem: Memory, nodes: NodesActor
     ) {
         self.cfg = cfg
         self.events = events
@@ -52,6 +54,8 @@ public struct Orchestrator: Sendable {
         self.cache = cache
         self.state = state
         self.usage = usage
+        self.mem = mem
+        self.nodes = nodes
     }
 
     // MARK: - Triage
@@ -64,6 +68,15 @@ public struct Orchestrator: Sendable {
             return cfg.defaultModel
         }
         return cfg.models.filter { fm.fileExists(atPath: $0.gguf) }.min(by: { $0.sizeGB < $1.sizeGB })?.name
+    }
+
+    /// Largest LOCAL-placement catalog model that fits free memory now,
+    /// preferring the requested tier. nil → nothing fits.
+    private func bestLocalFit(cfg: ConfigSnapshot, preferTier: String) async -> CatalogModel? {
+        let free = await mem.read().freeGB
+        let local = cfg.models.filter { Placement.parse($0.placement) == .local && $0.sizeGB + 2.0 <= free }
+        if let same = local.filter({ $0.tier == preferTier }).max(by: { $0.sizeGB < $1.sizeGB }) { return same }
+        return local.max(by: { $0.sizeGB < $1.sizeGB })
     }
 
     public static func heuristicTier(_ prompt: String) -> (String, [String]) {        let hasCode = prompt.contains("```") || prompt.lowercased().contains("code")
@@ -233,13 +246,58 @@ public struct Orchestrator: Sendable {
             }
             modelName = first
         }
-        guard let catalog = cfg.model(modelName) else {
+        guard let requested = cfg.model(modelName) else {
             throw EngineError.notFound("model \(modelName)")
         }
 
-        // 4) Placement (node/split honoured only when cluster enabled).
-        var placement = Placement.parse(catalog.placement)
+        // 4) Placement + RPC resource awareness. A remote/split placement the
+        //    target node(s) cannot serve right now is downgraded to the best
+        //    LOCAL model that fits, so auto-switching never strands a request on
+        //    an over-budget node.
+        var finalCatalog = requested
+        var placement = Placement.parse(requested.placement)
         if !cfg.clusterEnabled { placement = .local }
+        switch placement {
+        case .node(let id):
+            if let free = await nodes.freeGB(id) {
+                let need = requested.sizeGB + 2.0
+                if free < need {
+                    if let alt = await bestLocalFit(cfg: cfg, preferTier: tier) {
+                        finalCatalog = alt
+                        placement = .local
+                        try? await events.publish("resource.warning", [
+                            ("model", .string(requested.name)), ("node", .string(id)),
+                            ("reason", .string("rpc_resources_insufficient")),
+                            ("need_gb", .jDouble((need * 100).rounded() / 100)),
+                            ("free_gb", .jDouble((free * 100).rounded() / 100)),
+                            ("fallback", .string(alt.name)),
+                        ])
+                    }
+                }
+            }
+        case .split(let ids) where ids.count > 1:
+            let perNode = ResourceEstimator.splitPerNodeGB(weightsGB: requested.sizeGB, ctx: requested.ctx,
+                                                           slots: requested.slots, nodeCount: ids.count)
+            var shortfall = false
+            if ids.first == "local" || ids.first == "self" {
+                if (await mem.read()).freeGB < perNode { shortfall = true }
+            } else if let f = await nodes.freeGB(ids[0]), f < perNode { shortfall = true }
+            for peer in ids.dropFirst() {
+                if let f = await nodes.freeGB(peer), f < perNode { shortfall = true }
+            }
+            if shortfall, let alt = await bestLocalFit(cfg: cfg, preferTier: tier) {
+                finalCatalog = alt
+                placement = .local
+                try? await events.publish("resource.warning", [
+                    ("model", .string(requested.name)), ("node", .string(ids.first ?? "?")),
+                    ("reason", .string("rpc_resources_insufficient")),
+                    ("need_per_node_gb", .jDouble((perNode * 100).rounded() / 100)),
+                    ("fallback", .string(alt.name)),
+                ])
+            }
+        default:
+            break
+        }
 
         // 5) Admission gate (queued), then load (loading) — never 503.
         let queueWait = await admission.acquire()
@@ -252,7 +310,7 @@ public struct Orchestrator: Sendable {
         let t0 = Date()
         let engine: RunningEngine
         do {
-            engine = try await engines.ensureLoaded(catalog, placement: placement, cfg: cfg)
+            engine = try await engines.ensureLoaded(finalCatalog, placement: placement, cfg: cfg)
         } catch {
             await admission.release()
             throw error
@@ -272,7 +330,7 @@ public struct Orchestrator: Sendable {
             ("node", .string(engine.node)),
             ("split", .bool(engine.split)),
             ("rpc_peers", .array(splitPeers.map { .string($0) })),
-            ("reason", .string("tier=\(tier) conf=\(String(format: "%.2f", decision.confidence)) method=\(decision.method) placement=\(catalog.placement) sticky=\(sticky)")),
+            ("reason", .string("tier=\(tier) conf=\(String(format: "%.2f", decision.confidence)) method=\(decision.method) placement=\(finalCatalog.placement) sticky=\(sticky)")),
         ])
         await metrics.increment("routed_total")
 
