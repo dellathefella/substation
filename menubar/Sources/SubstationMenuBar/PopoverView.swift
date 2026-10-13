@@ -32,6 +32,7 @@ struct PopoverView: View {
         }
         .padding(16)
         .frame(width: 340)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: Header

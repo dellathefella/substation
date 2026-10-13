@@ -30,7 +30,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.delegate = self
         popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
+        let host = NSHostingController(rootView: PopoverView(model: model))
+        if #available(macOS 13.0, *) {
+            host.sizingOptions = [.preferredContentSize]
+        }
+        popover.contentViewController = host
 
         buildMenu()
         refresh()
