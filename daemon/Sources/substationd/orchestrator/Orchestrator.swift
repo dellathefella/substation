@@ -310,7 +310,7 @@ public struct Orchestrator: Sendable {
         var tier = decision.tier
         var sticky = false
         if forcedTier == nil, presetModel == nil {
-            let candidate = (cfg.tiers[tier] ?? []).first(where: { cfg.model($0) != nil })
+            let candidate = (cfg.tiers[tier] ?? []).first(where: { cfg.model($0)?.enabled == true })
             var pinned: Sticky?
             if let key = sessionKey, !key.isEmpty {
                 pinned = await sessions.pinned(key, ttlSeconds: cfg.sessionStickSeconds)
@@ -335,8 +335,18 @@ public struct Orchestrator: Sendable {
             }
         }
         let hasImages = Self.hasImages(messages)
-        if modelName.isEmpty || cfg.model(modelName) == nil {
-            var candidates = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }
+        if modelName.isEmpty || cfg.model(modelName)?.enabled == false || cfg.model(modelName) == nil {
+            if let pinnedModel = cfg.model(modelName), !pinnedModel.enabled {
+                tier = pinnedModel.tier
+            }
+            var candidates = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }.filter { $0.enabled }
+            if candidates.isEmpty {
+                try? await events.publishDeduped("context.warning", key: "context.warning:empty:\(tier)", [
+                    ("id", .string(requestId)), ("tier", .string(tier)),
+                    ("reason", .string("tier_has_no_enabled_models")),
+                ])
+                candidates = cfg.models.filter { $0.enabled }
+            }
             if hasImages {
                 let vision = candidates.filter { $0.vision }
                 if !vision.isEmpty {
@@ -362,7 +372,7 @@ public struct Orchestrator: Sendable {
             modelName = first.name
         }
         if let current = cfg.model(modelName), current.ctx < needCtx {
-            let fits = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }.filter { $0.ctx >= needCtx }
+            let fits = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }.filter { $0.enabled && $0.ctx >= needCtx }
             if let alt = fits.first {
                 try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
                     ("id", .string(requestId)), ("from", .string(modelName)), ("to", .string(alt.name)),
@@ -370,7 +380,7 @@ public struct Orchestrator: Sendable {
                     ("reason", .string("pinned_model_window_too_small")),
                 ])
                 modelName = alt.name
-            } else if let widest = (cfg.tiers[tier] ?? []).compactMap({ cfg.model($0) }).max(by: { $0.ctx < $1.ctx }) {
+            } else if let widest = (cfg.tiers[tier] ?? []).compactMap({ cfg.model($0) }).filter { $0.enabled }.max(by: { $0.ctx < $1.ctx }) {
                 try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
                     ("id", .string(requestId)), ("model", .string(widest.name)),
                     ("ctx", .jInt(widest.ctx)), ("need", .jInt(needCtx)),
@@ -382,7 +392,7 @@ public struct Orchestrator: Sendable {
         if hasImages {
             let cur = cfg.model(modelName)
             if cur?.vision != true {
-                if let visionAlt = (cfg.tiers[tier] ?? []).compactMap({ cfg.model($0) }).first(where: { $0.vision }) {
+                if let visionAlt = (cfg.tiers[tier] ?? []).compactMap({ cfg.model($0) }).first(where: { $0.enabled && $0.vision }) {
                     try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
                         ("id", .string(requestId)), ("from", .string(modelName)), ("to", .string(visionAlt.name)),
                         ("reason", .string("vision_upgrade")),

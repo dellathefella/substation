@@ -301,6 +301,8 @@ public enum Routes {
                     "ctx": .jInt(m.ctx),
                     "placement": .string(m.placement),
                     "loaded": .bool(engine != nil),
+                    "enabled": .bool(m.enabled),
+                    "vision": .bool(m.vision),
                     "node": engine.map { JSONValue.string($0.node) } ?? (m.node.map { JSONValue.string($0) } ?? .null),
                     "flags": .array(m.flags.map { JSONValue.string($0) }),
                     "port": engine.map { JSONValue.jInt($0.port) } ?? .null,
@@ -318,6 +320,9 @@ public enum Routes {
             let cfg = await kit.cfg.snapshot
             guard let model = cfg.model(name) else {
                 throw APIError.notFound("model \(name)")
+            }
+            guard model.enabled else {
+                throw APIError.badRequest("profile \(name) is dormant (enabled = false in config)")
             }
             guard model.kind == "local" else {
                 throw APIError.badRequest("\(model.kind) profiles are served by their upstream — nothing to load locally")

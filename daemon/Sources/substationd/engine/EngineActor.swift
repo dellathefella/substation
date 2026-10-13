@@ -272,7 +272,9 @@ public actor EngineActor {
                 let rpc = splitPeers.compactMap { peer in
                     cfg.node(peer).map { "\($0.host):\($0.rpcPort)" }
                 }
-                let weights = (["1"] + splitPeers.map { _ in "1" }).joined(separator: ",")
+                let weights = model.tensorSplit.isEmpty
+                    ? (["1"] + splitPeers.map { _ in "1" }).joined(separator: ",")
+                    : model.tensorSplit
                 args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", weights]
             }
             args += model.flags
@@ -299,7 +301,10 @@ public actor EngineActor {
                 "model": .string(model.name),
                 "port": .jInt(port),
                 "rpc": .array(splitPeers.compactMap { cfg.node($0) }.map { .string("\($0.host):\($0.rpcPort)") }),
-                "tensor_split": .array([JSONValue.string("1")] + splitPeers.map { _ in .string("1") }),
+                "tensor_split": .array((model.tensorSplit.isEmpty
+                    ? ["1"] + splitPeers.map { _ in "1" }
+                    : model.tensorSplit.split(separator: ",").map(String.init)
+                ).map { JSONValue.string($0) }),
             ])
             let status: Int
             do {

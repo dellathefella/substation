@@ -33,6 +33,11 @@ public struct CatalogModel: Sendable, Hashable {
     public var mmproj: String?
     /// True when the profile can accept image inputs (mmproj present).
     public var vision: Bool
+    /// False = profile defined but dormant: routing skips it (RAM-lean tracks
+    /// ported from the Ansible playbooks; flip `enabled = true` to activate).
+    public var enabled: Bool
+    /// --tensor-split weights for split placement (e.g. "1,2"); empty = even.
+    public var tensorSplit: String
 }
 
 public struct NodeStatic: Sendable, Hashable {
@@ -178,7 +183,10 @@ public struct ConfigSnapshot: Sendable {
                 kvMBPer1k: m["kv_mb_per_1k_ctx"]?.doubleValue ?? 0,
                 slots: m["parallel_slots"]?.intValue ?? 4,
                 mmproj: m["mmproj"]?.stringValue.map { Self.normalize(Self.expandPath($0)) },
-                vision: m["vision"]?.boolValue ?? ((m["mmproj"]?.stringValue) != nil)
+                vision: m["vision"]?.boolValue ?? ((m["mmproj"]?.stringValue) != nil),
+                enabled: m["enabled"]?.boolValue ?? true,
+                tensorSplit: (m["tensor_split"]?.stringValue ?? "")
+                    .replacingOccurrences(of: " ", with: "")
             )
         } ?? []
     }
