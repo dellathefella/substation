@@ -3,6 +3,7 @@
 auto_heal = true
 controller_id = "local"
 enabled = true
+local_enabled = false
 heartbeat_ms = 2000.0
 
 [daemon]
@@ -61,53 +62,23 @@ triage_upgrade_confidence = 0.8
 
 [orchestrator.tiers.balanced]
 desc = "Mid-size coders (Studio0 llama.cpp tracks)"
-models = ["qwen2.5-7b", "qwen3.8-27b", "ornith-1.5-35b"]
+models = ["qwen3.8-27b", "ornith-1.5-35b"]
 
 [orchestrator.tiers.fast]
 desc = "Light & quick (local triage model; gpt-oss fallback on Studio0)"
-models = ["qwen2.5-1.5b", "gpt-oss-20b"]
+models = ["gpt-oss-20b"]
 
 [orchestrator.tiers.smart]
 desc = "Flagship Mac Studio serving (llama.cpp tracks)"
 models = ["qwen3.8-flash-next", "glm-5.3-flash", "glm-5.3-flash-rpc"]
 
-[[models]]
-ctx = 32768.0
-gguf = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-name = "qwen2.5-1.5b"
-placement = "local"
-size_gb = 1.1
-tier = "fast"
-
-[[models]]
-ctx = 32768.0
-gguf = "models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
-name = "qwen2.5-7b"
-placement = "local"
-size_gb = 4.7
-tier = "balanced"
-
-[[models]]
-base_url = "http://192.168.7.248:8083"
-ctx = 32768.0
-kind = "external"
-model = "qwen3.8-flash-next"
-name = "qwen3.8-flash-next"
-protocol = "openai"
-size_gb = 150.0
-tier = "smart"
 
 
 
 
 
 
-[[models]]
-ctx = 32768.0
-gguf = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-name = "qwen2.5-1.5b-rpc"
-placement = "split:local+studio0"
-size_gb = 1.1
+
 
 # ---- tracks ported from MacStudioLLMAnsiblePlaybooks (substation-spawned) ----
 # -m/-c/--parallel/--alias/--metrics/--cache-reuse are added by the daemon;
@@ -148,14 +119,14 @@ enabled = false
 flags = ["--flash-attn","on","--batch-size","4096","-ngl","999","--timeout","1800","--load-mode","mmap+mlock","--cache-type-k","q8_0","--cache-type-v","q8_0","--ubatch-size","1024"]
 
 [[models]]
-name = "qwen3.8-flash-next-gguf"
+name = "qwen3.8-flash-next"
 gguf = "/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/Qwen3.8-Flash-Next-IQ4_NL-00001-of-00002.gguf"
 node = "studio0"
 tier = "smart"
 size_gb = 150.0
 ctx = 65536
 kv_mb_per_1k_ctx = 24.0
-enabled = false
+enabled = true
 flags = ["--flash-attn","on","--batch-size","4096","-ngl","999","--timeout","1800","--load-mode","mmap+mlock","--cache-type-k","f16","--cache-type-v","f16","--ubatch-size","4096","--spec-type","draft-mtp","--model-draft","/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/mtp-Qwen3.8-Flash-Next-Q8_0.gguf","--spec-draft-n-max","5","--spec-draft-sampling","probabilistic","--reasoning-format","none","--temp","1.0","--top-p","0.95","--top-k","20","--min-p","0.0"]
 
 [[models]]

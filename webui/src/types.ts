@@ -89,6 +89,7 @@ export interface DaemonStatus {
     resident_gb?: number;
     gpu_wired_limit_gb?: number;
     pressure?: string;
+    local_enabled?: boolean;
   };
 }
 

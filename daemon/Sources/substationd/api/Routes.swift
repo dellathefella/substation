@@ -222,6 +222,7 @@ public enum Routes {
                 "resident_gb": .jDouble((resident * 100).rounded() / 100),
                 "gpu_wired_limit_gb": .jDouble((gpuLimit * 100).rounded() / 100),
                 "pressure": .string(pressure),
+                "local_enabled": .bool(cfg.localEnabled),
             ])
             obj["system"] = await kit.system.json()
             obj["cluster_enabled"] = .bool(cfg.clusterEnabled)
@@ -419,6 +420,7 @@ public enum Routes {
                 "resident_gb": .jDouble((resident * 100).rounded() / 100),
                 "gpu_wired_limit_gb": .jDouble((limit * 100).rounded() / 100),
                 "pressure": .string(pressure),
+                "local_enabled": .bool(cfg.localEnabled),
                 "min_free_gb": .jDouble(cfg.minFreeRamGB),
                 "engines": .array(live.map { .object([
                     "model": .string($0.model), "node": .string($0.node), "size_gb": .jDouble($0.sizeGB),
@@ -491,7 +493,7 @@ public enum Routes {
             let cfg = await kit.cfg.snapshot
             await kit.events.configure(ringSize: cfg.eventRingSize)
             await kit.admission.configure(cfg.maxConcurrentRequests)
-            if cfg.clusterEnabled { _ = await kit.engines.startRPCSelf(cfg) } else { await kit.engines.stopRPCSelf() }
+            if cfg.clusterEnabled && cfg.localEnabled { _ = await kit.engines.startRPCSelf(cfg) } else { await kit.engines.stopRPCSelf(port: (await kit.cfg.snapshot).rpcPort) }
             try? await kit.events.publish("config.changed", .object([
                 "keys": .array(keys.map { JSONValue.string($0) }),
             ]))
@@ -597,7 +599,7 @@ public enum Routes {
             let start = body["start"]?.boolValue ?? true
             let up: Bool
             if start { up = await kit.engines.startRPCSelf(await kit.cfg.snapshot) }
-            else { await kit.engines.stopRPCSelf(); up = false }
+            else { await kit.engines.stopRPCSelf(port: (await kit.cfg.snapshot).rpcPort); up = false }
             return jsonResponse(.object(["rpc_up": .bool(up)]), status: (!start || up) ? .ok : .serviceUnavailable)
         }
 
@@ -650,7 +652,7 @@ public enum Routes {
                 await kit.nodes.clearCluster()
                 await kit.cfg.removePath("nodes")
                 _ = try? await kit.cfg.applyPatch(.object(["cluster": .object(["enabled": .bool(false)])]))
-                await kit.engines.stopRPCSelf()
+                await kit.engines.stopRPCSelf(port: (await kit.cfg.snapshot).rpcPort)
                 try? await kit.events.publish("cluster.disabled", [("reason", .string("unjoined"))])
             }
             let remaining = await kit.nodes.allNodes().count
@@ -699,7 +701,7 @@ public enum Routes {
             try await auth(req, kit)
             try await kit.cfg.reset(to: TOML.parse(ConfigDefaults.toml))
             await kit.nodes.clearCluster()
-            await kit.engines.stopRPCSelf()
+            await kit.engines.stopRPCSelf(port: (await kit.cfg.snapshot).rpcPort)
             let keys: [String] = ["*"]
             try? await kit.events.publish("config.changed", [("keys", .array(keys.map { JSONValue.string($0) })), ("reset", .bool(true))])
             return jsonResponse(.object(["ok": .bool(true), "reset": .bool(true)]))

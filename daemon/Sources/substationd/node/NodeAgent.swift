@@ -154,7 +154,7 @@ public enum NodeRoutes {
 
         app.on(.POST, "api", "node", "rpc", "stop", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await NodeKit.auth(req, kit)
-            await kit.engines.stopRPCSelf()
+            await kit.engines.stopRPCSelf(port: (await kit.cfg.snapshot).rpcPort)
             return jsonResponse(.object(["rpc_up": .bool(false)]))
         }
 

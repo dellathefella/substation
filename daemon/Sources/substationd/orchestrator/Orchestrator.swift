@@ -87,7 +87,13 @@ public struct Orchestrator: Sendable {
     /// `orchestrator.default_model` if loadable, else the smallest catalog model.
     public static func defaultModelName(_ cfg: ConfigSnapshot) -> String? {
         let fm = FileManager.default
-        func live(_ m: CatalogModel) -> Bool { m.kind != "local" || fm.fileExists(atPath: m.gguf) }
+        func live(_ m: CatalogModel) -> Bool {
+            guard m.enabled else { return false }
+            if m.kind != "local" { return true }
+            // Node-placement profiles keep their gguf on the node's disk.
+            if Placement.parse(m.placement) != .local { return true }
+            return fm.fileExists(atPath: m.gguf)
+        }
         if !cfg.defaultModel.isEmpty, let m = cfg.model(cfg.defaultModel), live(m) {
             return cfg.defaultModel
         }
@@ -97,6 +103,7 @@ public struct Orchestrator: Sendable {
     /// Largest LOCAL-placement catalog model that fits free memory now,
     /// preferring the requested tier. nil → nothing fits.
     private func bestLocalFit(cfg: ConfigSnapshot, preferTier: String) async -> CatalogModel? {
+        guard cfg.localEnabled else { return nil }
         let free = await mem.read().freeGB
         let local = cfg.models.filter { Placement.parse($0.placement) == .local && $0.sizeGB + 2.0 <= free }
         if let same = local.filter({ $0.tier == preferTier }).max(by: { $0.sizeGB < $1.sizeGB }) { return same }

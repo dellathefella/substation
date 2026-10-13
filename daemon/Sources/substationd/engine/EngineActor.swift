@@ -163,9 +163,14 @@ public actor EngineActor {
         return rpcPid > 0
     }
 
-    public func stopRPCSelf() {
+    public func stopRPCSelf(port: Int? = nil) {
         if rpcPid > 0 { kill(rpcPid, SIGTERM); rpcPid = 0 }
         if rpcAdoptedPid > 0 { kill(rpcAdoptedPid, SIGTERM); rpcAdoptedPid = 0 }
+        // Orphan listener from a previous run (e.g. after switching this
+        // machine to controller-only): clear whoever holds the rpc port.
+        if let port, let pid = Self.listenerPid(port: port), pid > 0 {
+            kill(pid, SIGTERM)
+        }
     }
 
     /// PID of the process LISTENing on `port` (lsof), if any.
@@ -217,6 +222,9 @@ public actor EngineActor {
             } else {
                 (node, splitPeers, isSplit) = ("local", [], false)
             }
+        }
+        if !cfg.localEnabled && node == "local" {
+            throw EngineError.notFound("local compute disabled (cluster.local_enabled = false) — use a node placement")
         }
         let key = "\(model.name)@\(node)"
 

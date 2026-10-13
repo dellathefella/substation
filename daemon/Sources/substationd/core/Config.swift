@@ -61,6 +61,9 @@ public struct ConfigSnapshot: Sendable {
     public var maxConcurrentRequests: Int { tree["daemon"]?["max_concurrent_requests"]?.intValue ?? 8 }
 
     public var clusterEnabled: Bool { tree["cluster"]?["enabled"]?.boolValue ?? false }
+    /// False = this machine is control-plane only: no local engines, no local
+    /// rpc-server, `local` placements are refused (compute lives on nodes).
+    public var localEnabled: Bool { tree["cluster"]?["local_enabled"]?.boolValue ?? true }
     public var controllerId: String { tree["cluster"]?["controller_id"]?.stringValue ?? "studio0" }
     public var heartbeatMs: Int { tree["cluster"]?["heartbeat_ms"]?.intValue ?? 2000 }
     public var autoHeal: Bool { tree["cluster"]?["auto_heal"]?.boolValue ?? true }

@@ -108,7 +108,11 @@ if role == "node" {
         for n in snapshot.nodes {
             await nodes.register(id: n.id, name: n.id, ip: n.host, agentPort: n.agentPort, rpcPort: n.rpcPort)
         }
-        _ = await engines.startRPCSelf(snapshot)
+        if snapshot.localEnabled {
+            _ = await engines.startRPCSelf(snapshot)
+        } else {
+            await engines.stopRPCSelf(port: snapshot.rpcPort)
+        }
     }
 
     await engines.startTriageIfNeeded(snapshot)
