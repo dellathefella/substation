@@ -1,0 +1,73 @@
+
+[cluster]
+controller_id = "local"
+enabled = false
+heartbeat_ms = 2000.0
+
+[daemon]
+auth_token = ""
+bind = "127.0.0.1"
+max_concurrent_requests = 4.0
+port = 8800.0
+session_stick_seconds = 300.0
+webui_dist = "./webui/dist"
+
+[engines]
+base_port = 8940.0
+default_ctx = 4096.0
+idle_evict_seconds = 900.0
+llama_server = "./scripts/fake-engine.py"
+rpc_server = "./scripts/fake-engine.py"
+startup_timeout_s = 30.0
+
+[metrics]
+event_ring_size = 2000.0
+sample_interval_ms = 1000.0
+ws_tick_batch_ms = 250.0
+
+[node]
+agent_port = 8801.0
+rpc_port = 50052.0
+
+[orchestrator]
+cache_enabled = true
+cache_max_entries = 128.0
+triage_gguf = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+triage_port = 8931.0
+triage_timeout_ms = 250.0
+triage_upgrade_confidence = 0.8
+
+[orchestrator.tiers]
+
+[orchestrator.tiers.balanced]
+models = ["small"]
+
+[orchestrator.tiers.fast]
+models = ["tiny"]
+
+[orchestrator.tiers.smart]
+models = ["big"]
+
+[[models]]
+ctx = 4096.0
+gguf = "models/tiny.gguf"
+name = "tiny"
+placement = "local"
+size_gb = 0.5
+tier = "fast"
+
+[[models]]
+ctx = 4096.0
+gguf = "models/small.gguf"
+name = "small"
+placement = "local"
+size_gb = 1.0
+tier = "balanced"
+
+[[models]]
+ctx = 4096.0
+gguf = "models/big.gguf"
+name = "big"
+placement = "local"
+size_gb = 2.0
+tier = "smart"

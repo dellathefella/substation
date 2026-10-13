@@ -4,6 +4,7 @@ target/
 runner/
 webui/node_modules/
 webui/dist/
+daemon/.build/*
 menubar/.build/
 third_party/llama.cpp/
 models/

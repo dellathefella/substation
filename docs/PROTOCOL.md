@@ -28,7 +28,7 @@ Headers always: `X-Substation-Request-Id`, `X-Substation-Tier`.
 
 ### GET /v1/models — virtual models + real catalog (owned_by: substation-virtual|substation).
 
-### Admin/observability
+### Admin/observability — every option is settable via config file, REST, CLI, UI
 - `GET /api/status` → {state, uptime_s, requests_active, requests_per_min,
   tokens_per_sec, models_loaded, models_total, nodes[]}
 - `GET /api/metrics` → counters, percentiles (ttft_ms, total_ms, tok_s per
@@ -37,6 +37,14 @@ Headers always: `X-Substation-Request-Id`, `X-Substation-Tier`.
 - `GET /api/models` | `POST /api/models/{name}/load` | `POST /api/models/{name}/unload`
 - `GET /api/nodes` → cluster nodes: health, ram, gpu, runners, rpc peers.
 - `POST /api/admin/pause` | `/api/admin/resume` | `/api/admin/reload`
+- `GET /api/config` → effective runtime config (JSON).
+- `PUT /api/config` → partial JSON patch of mutable fields; daemon applies,
+  persists to config TOML, broadcasts `{type:"config.changed", data:{keys:[]}}`.
+  Mutable: cluster.enabled, tiers→models map, session_stick_seconds,
+  max_concurrent_requests, triage (gguf/timeout/upgrade confidence),
+  cache (enabled/max), engine evict settings, per-model placement/ctx, auth_token.
+  Requiring restart: bind/port/agent ports.
+- CLI mirrors REST via `substationd admin` (see §5).
 - `GET /ws` → JSON frames {"type","ts","data":{...}}:
 
 | type | data |
@@ -101,7 +109,76 @@ Controller polls node health every 2s; spawns runners remotely for placement.
 
 ## 4. Config — see config/substation.toml
 
-## 5. Transparency invariants (MUST hold)
+## 5. Chat API (desktop app + dashboard chat tab)
+
+Stateless at the engine layer (chat is replayed on tier switch — transparency
+invariant); the DAEMON persists conversations for the desktop app.
+
+- `GET /api/chat/sessions` → [{id,title,updated_at,model_hint,messages:n}]
+- `POST /api/chat/sessions` {title?} → {id}
+- `GET /api/chat/sessions/{id}/messages` → [{role,content,ts,tier,model,node,tok_s}]
+- `POST /api/chat/sessions/{id}/send` {content, pin:"auto"|"auto-fast"|"auto-smart"|<model>} →
+  streams via SSE exactly like /v1/chat/completions; persisted assistant message
+  carries REAL model/node/tier (desktop app shows the tag; public API never does).
+- `DELETE /api/chat/sessions/{id}` | `DELETE /api/chat/sessions/{id}/messages/{i}`
+  (message delete = "keep the model focused" affordance)
+- Storage: `state/conversations/<id>.json` (atomic write; configurable dir).
+
+## 6. Discovery & join (optional clustering)
+
+- **Discovery**: each node agent multicasts a beacon every 5s to
+  `224.0.1.87:8810` (+ 255.255.255.255 broadcast): JSON
+  {magic:"SUBJ", node_id, name, ip, agent_port, version, join_hash}
+  where join_hash = SHA256(join_code + node_id) truncated 16 hex.
+- Controller lists peers: `GET /api/discovery` → [{node_id,name,ip,agent_port,
+  seen_ms_ago, link:{kind:"thunderbolt"|"ethernet"|"wifi", rtt_ms, mbps, rdma}}].
+- **Join code**: `POST /api/admin/join-code` → 6-digit code (controller),
+  TTL 10min. Peer joins: `POST /api/cluster/join` {controller_ip, code} (on peer's
+  node agent) OR CLI `substationd join --controller <ip> --code 123456` OR UI.
+  Controller validates code (constant-time), adds node, starts heartbeat,
+  starts rpc-server on both ends (cluster enabled automatically).
+- **Thunderbolt plumb-up** (`POST /api/cluster/{node}/plumb-thunderbolt`):
+  controller returns the exact `networksetup -setmanual "Thunderbolt Bridge"
+  10.99.<n>.1 255.255.255.0` command per node; executes locally for the head
+  node, returns copy-paste command for the peer (or runs via peer agent if it
+  runs as admin user). Then probes RTT/bandwidth over the bridge and rewrites
+  link.kind=thunderbolt.
+- **RDMA warnings** (event `{type:"cluster.warning", data:{node, level, code, msg}}`):
+  - `rdma_unavailable`: no Thunderbolt/RDMA path detected (Wi-Fi/Ethernet only)
+    → "RPC split will be TCP-bound; connect a Thunderbolt cable for RDMA."
+  - `rdma_not_enabled`: TB link present but measured RTT > 1.5 ms or
+    < 3 Gbps → "RDMA not enabled — llama.cpp RPC over TCP. Expect degraded
+    split-model throughput." (RDMA-over-TB requires TB4/ILB2 + recent macOS.)
+  - `high_latency`: rtt > 8 ms on active split placements.
+  - Link probe on join and every 60s while cluster enabled.
+  - **Non-Thunderbolt clustering is ALLOWED but warned heavily**: joining over
+    Ethernet/Wi-Fi (or any link probing < 3 Gbps / > 8 ms) shows an amber
+    warning in dashboard + menu bar and the daemon logs a loud `cluster.warning`;
+    split placements remain permitted (UI shows an "unsafe link" badge and
+    suggests solo placement for big models).
+- **RPC cache**: `ggml-rpc-server` is ALWAYS launched without `-c/--cache`
+  (no file cache → no SSD wear; matches fleet convention). If a future build
+  enables caching, any request whose first RPC step hits a cold cache emits
+  `{type:"engine.wait", reason:"rpc_cache_load"}` + persistent "loading weights
+  over RPC" progress in dashboard/menu bar.
+- **Sleep prevention while engines online**: while ≥1 llama-server is loaded,
+  substationd holds an `IOKit IOPMAssertion(kIOPMAssertionTypePreventUserIdleSystemSleep)`
+  and disk-sleep assertion (`PreventDiskIdle` via `IODiskArbitration`/caffeinate
+  child — daemon picks IOKit natively). Released when last engine unloads/pauses;
+  node agents hold the same assertion while hosting runners/rpc.
+
+## 7. CLI (`substationd admin`, defaults to http://127.0.0.1:8800; `SUBSTATION_URL` overrides)
+```
+substationd admin status | metrics | events [n]
+substationd admin models list | model load <name> | model unload <name>
+substationd admin cluster enable | disable
+substationd admin config get | config set <dotted.key> <json-value>
+substationd admin pause | resume | reload
+substationd admin chat "prompt" [--model auto] [--stream]   # smoke-test helper
+```
+CLI = thin client over the same REST endpoints the UI uses (parity by construction).
+
+## 6. Transparency invariants (MUST hold)
 1. Client-visible `model` = virtual name, always.
 2. No client ever sees "model loading" errors — admission control + prefetch.
 3. Session stickiness prevents quality jitter; upgrades one-way per session.

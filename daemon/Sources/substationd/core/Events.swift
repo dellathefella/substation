@@ -1,0 +1,63 @@
+import Foundation
+import Vapor
+import WebSocketKit
+
+public struct Event: Codable, Sendable {
+    public var type: String
+    public var ts: Double
+    public var data: JSONValue
+
+    public init(_ type: String, _ data: JSONValue) {
+        self.type = type
+        self.ts = Date().timeIntervalSince1970 * 1000
+        self.data = data
+    }
+}
+
+/// Ring buffer of recent events + fan-out to WebSocket subscribers.
+public actor EventActor {
+    private var ring: [Event] = []
+    private var ringSize = 2000
+    private var subs: [UUID: WebSocket] = [:]
+
+    public func configure(ringSize: Int) {
+        self.ringSize = max(16, ringSize)
+    }
+
+    public func publish(_ event: Event) {
+        ring.append(event)
+        if ring.count > ringSize { ring.removeFirst(ring.count - ringSize) }
+        guard let data = try? JSONEncoder().encode(event), let value = JSONCoding.decode(data) else { return }
+        let frame = JSONCoding.encodeString(value)
+        for (_, ws) in subs {
+            ws.send(frame)
+        }
+    }
+
+    public func publish(_ type: String, _ data: JSONValue) {
+        publish(Event(type, data))
+    }
+
+    public func publish(_ type: String, _ fields: [(String, JSONValue)]) {
+        var obj: [String: JSONValue] = [:]
+        for (k, v) in fields { obj[k] = v }
+        publish(Event(type, .object(obj)))
+    }
+
+    public func subscribe(_ ws: WebSocket) -> UUID {
+        let id = UUID()
+        subs[id] = ws
+        return id
+    }
+
+    public func unsubscribe(_ id: UUID) {
+        subs.removeValue(forKey: id)
+    }
+
+    public func subscriberCount() -> Int { subs.count }
+
+    /// Newest first.
+    public func recent(limit: Int) -> [Event] {
+        Array(ring.suffix(max(0, limit)).reversed())
+    }
+}

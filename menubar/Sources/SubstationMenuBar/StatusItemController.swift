@@ -1,0 +1,165 @@
+import AppKit
+import SwiftUI
+import Combine
+
+/// Owns the NSStatusItem: left-click toggles the SwiftUI popover,
+/// right-click / control-click pops the admin menu.
+@MainActor
+final class StatusItemController: NSObject, NSPopoverDelegate {
+    private let model: AppModel
+    private var statusItem: NSStatusItem
+    private let popover = NSPopover()
+    private let menu = NSMenu()
+    private var cancellables = Set<AnyCancellable>()
+
+    init(model: AppModel) {
+        self.model = model
+        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
+
+        if let button = statusItem.button {
+            let image = NSImage(systemSymbolName: "cube.box.fill", accessibilityDescription: "Substation")
+            image?.isTemplate = true
+            button.image = image
+            button.imagePosition = .imageLeading
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.animates = true
+        popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
+
+        buildMenu()
+        refresh()
+
+        model.objectWillChange
+            .sink { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.refresh()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: Status item appearance
+
+    func refresh() {
+        guard let button = statusItem.button else { return }
+        let title = model.barTitle
+        let showBadge = model.isOnline && model.isPaused
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: model.isOnline ? NSColor.labelColor : NSColor.disabledControlTextColor,
+        ]
+        var text = NSAttributedString(string: title, attributes: attributes)
+        if showBadge {
+            let combined = NSMutableAttributedString(attributedString: text)
+            combined.append(NSAttributedString(
+                string: " II",
+                attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .heavy),
+                    .baselineOffset: 2,
+                    .foregroundColor: NSColor.systemYellow,
+                ]
+            ))
+            text = combined
+        }
+        button.attributedTitle = text
+        button.appearsDisabled = model.offline
+        button.toolTip = model.offline
+            ? "Substation — daemon offline (\(model.baseURL))"
+            : "Substation — \(model.stateLabel) (\(model.baseURL))"
+    }
+
+    // MARK: Click handling
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        let rightClick = event?.type == .rightMouseUp
+            || event?.type == .rightMouseDown
+            || (event?.modifierFlags.contains(.control) ?? false)
+        if rightClick {
+            showMenu()
+        } else {
+            togglePopover()
+        }
+    }
+
+    private func showMenu() {
+        guard let button = statusItem.button else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
+    }
+
+    private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: Menu
+
+    private func buildMenu() {
+        menu.autoenablesItems = false
+        add("Open Dashboard", #selector(openDashboard))
+        menu.addItem(.separator())
+        add("Pause Routing", #selector(pauseRouting))
+        add("Resume Routing", #selector(resumeRouting))
+        add("Reload Config", #selector(reloadConfig))
+        menu.addItem(.separator())
+        add("Set Daemon URL…", #selector(setDaemonURL))
+        add("Quit Substation", #selector(quit), key: "q")
+    }
+
+    private func add(_ title: String, _ action: Selector, key: String = "") {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        menu.addItem(item)
+    }
+
+    @objc private func openDashboard() {
+        guard let url = URL(string: model.baseURL + "/") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func pauseRouting() {
+        model.pauseRouting()
+    }
+
+    @objc private func resumeRouting() {
+        model.resumeRouting()
+    }
+
+    @objc private func reloadConfig() {
+        model.reloadConfig()
+    }
+
+    @objc private func setDaemonURL() {
+        let alert = NSAlert()
+        alert.messageText = "Set Daemon URL"
+        alert.informativeText = "Overrides SUBSTATION_URL. Leave empty to clear the override."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = Settings.storedBaseURLOverride()
+            .isEmpty ? model.baseURL : Settings.storedBaseURLOverride()
+        field.placeholderString = "http://127.0.0.1:8800"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Settings.setBaseURLOverride(field.stringValue)
+        model.reloadBase()
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+}
