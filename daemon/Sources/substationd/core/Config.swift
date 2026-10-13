@@ -3,6 +3,11 @@ import Foundation
 public struct CatalogModel: Sendable, Hashable {
     public var name: String
     public var gguf: String
+    /// Optional directory override (drive, network share, external SSD).
+    /// `dir` + `file` compose `gguf` when no explicit gguf path is given.
+    /// Supports ~ expansion and $VAR/${VAR} env expansion (e.g. $VOLUME_NAME).
+    public var dir: String?
+    public var file: String?
     public var tier: String
     public var sizeGB: Double
     public var ctx: Int
@@ -40,7 +45,7 @@ public struct ConfigSnapshot: Sendable {
     public var heartbeatMs: Int { tree["cluster"]?["heartbeat_ms"]?.intValue ?? 2000 }
     public var probeBytesMB: Int { tree["cluster"]?["probe_bytes_mb"]?.intValue ?? 16 }
 
-    public var triageGguf: String { tree["orchestrator"]?["triage_gguf"]?.stringValue ?? "" }
+    public var triageGguf: String { ConfigSnapshot.expandPath(tree["orchestrator"]?["triage_gguf"]?.stringValue ?? "") }
     public var triagePort: Int { tree["orchestrator"]?["triage_port"]?.intValue ?? 8931 }
     public var triageTimeoutMs: Int { tree["orchestrator"]?["triage_timeout_ms"]?.intValue ?? 250 }
     public var triageUpgradeConfidence: Double { tree["orchestrator"]?["triage_upgrade_confidence"]?.doubleValue ?? 0.8 }
@@ -78,12 +83,31 @@ public struct ConfigSnapshot: Sendable {
         return out
     }
 
+    public var modelsDir: String { Self.expandPath(tree["engines"]?["models_dir"]?.stringValue ?? "./models") }
+
     public var models: [CatalogModel] {
         tree["models"]?.arrayValue?.compactMap { m in
             guard let name = m["name"]?.stringValue else { return nil }
+            let dirRaw = m["dir"]?.stringValue
+            let dir = dirRaw.map { Self.expandPath($0) }
+            let file = m["file"]?.stringValue
+            let rawGguf = m["gguf"]?.stringValue
+            var gguf: String
+            if let dir, let file {
+                gguf = dir + "/" + file
+            } else if let rawGguf {
+                gguf = rawGguf.starts(with: "/") ? Self.expandPath(rawGguf) : modelsDir + "/" + Self.expandPath(rawGguf)
+            } else if let dir {
+                gguf = dir + "/" + name + ".gguf"
+            } else {
+                gguf = modelsDir + "/" + name + ".gguf"
+            }
+            gguf = Self.normalize(gguf)
             return CatalogModel(
                 name: name,
-                gguf: m["gguf"]?.stringValue ?? "models/\(name).gguf",
+                gguf: gguf,
+                dir: dir,
+                file: file,
                 tier: m["tier"]?.stringValue ?? "balanced",
                 sizeGB: m["size_gb"]?.doubleValue ?? 4,
                 ctx: m["ctx"]?.intValue ?? defaultCtx,
@@ -97,6 +121,45 @@ public struct ConfigSnapshot: Sendable {
 
     public func model(_ name: String) -> CatalogModel? {
         models.first { $0.name == name }
+    }
+
+    /// ~ and $VAR/${VAR} expansion for model paths (drives, network shares).
+    public static func expandPath(_ raw: String) -> String {
+        guard !raw.isEmpty else { return raw }
+        var s = raw
+        if s == "~" {
+            s = NSHomeDirectory()
+        } else if s.hasPrefix("~/") {
+            s = NSHomeDirectory() + String(s.dropFirst(1))
+        }
+        let env = ProcessInfo.processInfo.environment
+        var out = ""
+        var i = s.startIndex
+        while i < s.endIndex {
+            if s[i] == "$" {
+                var j = s.index(after: i)
+                var name = ""
+                var braced = false
+                if j < s.endIndex, s[j] == "{" { braced = true; j = s.index(after: j) }
+                while j < s.endIndex {
+                    let c = s[j]
+                    if c == "}" && braced { j = s.index(after: j); break }
+                    if c == "}" || !(c.isLetter || c.isNumber || c == "_") { break }
+                    name.append(c)
+                    j = s.index(after: j)
+                }
+                if !name.isEmpty, let v = env[name] { out += v; i = j; continue }
+            }
+            out.append(s[i])
+            i = s.index(after: i)
+        }
+        return out
+    }
+
+    static func normalize(_ p: String) -> String {
+        var r = p
+        while r.contains("//") { r = r.replacingOccurrences(of: "//", with: "/") }
+        return r.hasSuffix("/") ? String(r.dropLast()) : r
     }
 
     public var nodes: [NodeStatic] {

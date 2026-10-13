@@ -110,6 +110,9 @@ public enum CLI {
         case "reload": return await request("POST", "/api/admin/reload", json([:]))
         case "rotate-key": return await request("POST", "/api/admin/rotate-key", json([:]))
         case "reset": return await request("POST", "/api/admin/reset-config", json([:]))
+        case "tune":
+            if rest.first == "apply" { return await request("POST", "/api/tune/apply", json([:])) }
+            return await request("GET", "/api/tune/analyze")
         case "chat":
             guard let prompt = rest.first else { print("chat \"prompt\" [--model auto] [--stream]"); return 2 }
             let flags = Array(rest.dropFirst())

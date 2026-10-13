@@ -290,6 +290,22 @@ public enum Routes {
 
         // MARK: Admin
 
+        // Auto-tuner: analyze + apply.
+        app.get("api", "tune", "analyze") { req async throws -> Response in
+            try await auth(req, kit)
+            let cfg = await kit.cfg.snapshot
+            let report = await Tuner.analyze(cfg: cfg, mem: kit.mem, nodes: kit.nodes)
+            return jsonResponse(report.json)
+        }
+        app.on(.POST, "api", "tune", "apply") { req async throws -> Response in
+            try await auth(req, kit)
+            let cfg = await kit.cfg.snapshot
+            let report = await Tuner.analyze(cfg: cfg, mem: kit.mem, nodes: kit.nodes)
+            try await kit.cfg.applyPatch(Tuner.applyPatch(report: report))
+            try? await kit.events.publish("config.changed", [("keys", .array([.string("orchestrator.tiers"), .string("orchestrator.default_ctx")])), ("tuned", .bool(true))])
+            return jsonResponse(.object(["ok": .bool(true), "applied": report.json]))
+        }
+
         app.on(.POST, "api", "admin", "pause", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await auth(req, kit)
             await kit.state.setPaused(true)
