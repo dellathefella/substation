@@ -63,10 +63,7 @@ export function Header(props: { onOpenSettings: () => void; view: View; onView: 
     <header className="header">
       <div className="header-brand">
         <div className="brand-mark" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 22 22">
-            <polygon points="11,1 21,6.5 21,15.5 11,21 1,15.5 1,6.5" fill="none" stroke="#3b82f6" strokeWidth="1.6" />
-            <circle cx="11" cy="11" r="3" fill="#3b82f6" />
-          </svg>
+          <img className="brand-logo" src="/substation.svg" alt="" draggable="false" />
         </div>
         <div className="brand-text">
           <span className="brand-name">SUBSTATION</span>

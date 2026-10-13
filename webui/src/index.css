@@ -2232,3 +2232,20 @@ code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(142, 144, 224, 0.12);
+  border: 1px solid rgba(142, 144, 224, 0.35);
+}
+
+.brand-logo {
+  width: 22px;
+  height: 25px;
+  display: block;
+  filter: drop-shadow(0 0 6px rgba(141, 135, 236, 0.45));
+}

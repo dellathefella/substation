@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="201 186 249 281" width="249" height="281">
+<title>Isometric transformer (minimal)</title>
+<polygon points="213.4,380.0 343.3,455.0 343.3,330.0 213.4,255.0" fill="#aeb2f2" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="429.9,405.0 343.3,455.0 343.3,330.0 429.9,280.0" fill="#8c90e0" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="300.0,205.0 429.9,280.0 343.3,330.0 213.4,255.0" fill="#e6e7fd" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="406.5,398.5 430.8,412.5 430.8,327.5 406.5,313.5" fill="#9ea2ea" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="438.6,408.0 430.8,412.5 430.8,327.5 438.6,323.0" fill="#7276cc" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="414.3,309.0 438.6,323.0 430.8,327.5 406.5,313.5" fill="#d4d6fb" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="382.3,412.5 406.5,426.5 406.5,341.5 382.3,327.5" fill="#9ea2ea" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="414.3,422.0 406.5,426.5 406.5,341.5 414.3,337.0" fill="#7276cc" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="390.1,323.0 414.3,337.0 406.5,341.5 382.3,327.5" fill="#d4d6fb" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="358.0,426.5 382.3,440.5 382.3,355.5 358.0,341.5" fill="#9ea2ea" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="390.1,436.0 382.3,440.5 382.3,355.5 390.1,351.0" fill="#7276cc" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="365.8,337.0 390.1,351.0 382.3,355.5 358.0,341.5" fill="#d4d6fb" stroke="#2e2a5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="282.7,328.0 270.6,351.0 279.2,356.0 274.0,379.0 287.9,355.0 279.2,350.0" fill="#2e2a5c" stroke="#2e2a5c" stroke-width="0" stroke-linejoin="round"/>
+<path d="M279.7,247.5 A7.3,4.2 0 0 0 294.4,247.5 L294.4,202.5 A7.3,4.2 0 0 0 279.7,202.5 Z" fill="#6a63d8" stroke="#2e2a5c" stroke-width="2"/>
+<ellipse cx="287.0" cy="202.5" rx="7.3" ry="4.2" fill="#8d87ec" stroke="#2e2a5c" stroke-width="2"/>
+<path d="M314.3,267.5 A7.3,4.2 0 0 0 329.0,267.5 L329.0,222.5 A7.3,4.2 0 0 0 314.3,222.5 Z" fill="#6a63d8" stroke="#2e2a5c" stroke-width="2"/>
+<ellipse cx="321.7" cy="222.5" rx="7.3" ry="4.2" fill="#8d87ec" stroke="#2e2a5c" stroke-width="2"/>
+<path d="M348.9,287.5 A7.3,4.2 0 0 0 363.6,287.5 L363.6,242.5 A7.3,4.2 0 0 0 348.9,242.5 Z" fill="#6a63d8" stroke="#2e2a5c" stroke-width="2"/>
+<ellipse cx="356.3" cy="242.5" rx="7.3" ry="4.2" fill="#8d87ec" stroke="#2e2a5c" stroke-width="2"/>
+</svg>
