@@ -252,15 +252,11 @@ export function ClusterStatus(): React.JSX.Element {
         </div>
       ))}
       <div className="node-grid">
-        {mem ? (
+        {mem && mem.local_enabled !== false ? (
           <div className="node-card">
             <div className="nc-head">
-              <span className="nc-name">⬢ this Mac{mem.local_enabled === false ? ' · controller' : ''}</span>
-              {mem.local_enabled === false ? (
-                <Pill tone="muted">no compute</Pill>
-              ) : (
-                <Pill tone={mem.pressure === 'critical' ? 'err' : mem.pressure === 'warn' ? 'warn' : 'ok'}>{mem.pressure ?? 'ok'}</Pill>
-              )}
+              <span className="nc-name">⬢ this Mac</span>
+              <Pill tone={mem.pressure === 'critical' ? 'err' : mem.pressure === 'warn' ? 'warn' : 'ok'}>{mem.pressure ?? 'ok'}</Pill>
               {mem.gpu_wired_limit_gb ? <span className="nc-metric">gpu cap {mem.gpu_wired_limit_gb.toFixed(0)}</span> : null}
             </div>
             <ResourceBars
