@@ -48,7 +48,6 @@ const SECTIONS: { title: string; fields: readonly Field[] }[] = [
   },
 ];
 
-const TIERS = ['fast', 'balanced', 'smart'] as const;
 
 function readPath(cfg: RuntimeConfig | null, path: string): unknown {
   let cur: unknown = cfg;
@@ -77,7 +76,7 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
   const patchConfigLocal = useStore((s) => s.patchConfigLocal);
   const replaceConfig = useStore((s) => s.replaceConfig);
   const [draft, setDraft] = useState<Record<string, string | boolean>>({});
-  const [tiers, setTiers] = useState<Record<string, string>>({});
+  const [tierRows, setTierRows] = useState<{ name: string; priority: string; desc: string; models: string[] }[]>([]);
   const [defaultModel, setDefaultModel] = useState('');
   const [token, setToken] = useState('');
   const [tab, setTab] = useState<'form' | 'json' | 'profiles'>('form');
@@ -109,9 +108,15 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     const rawNodes = ((config as Record<string, unknown> | null)?.nodes ?? {}) as Record<string, { host?: string; agent_port?: number; rpc_port?: number }>;
     setNodesDraft(Object.fromEntries(Object.entries(rawNodes).map(([id, n]) => [id, { host: n.host ?? '', agent_port: String(n.agent_port ?? 8801), rpc_port: String(n.rpc_port ?? 50052) }])));
     setRpcUp((config as Record<string, unknown> | null)?.cluster != null ? true : null);
-    const t: Record<string, string> = {};
-    for (const tier of TIERS) t[tier] = config?.orchestrator?.tiers?.[tier]?.models?.[0] ?? '';
-    setTiers(t);
+    const rawTiers = (config?.orchestrator?.tiers ?? {}) as Record<string, { models?: string[]; priority?: number; desc?: string }>;
+    setTierRows(Object.entries(rawTiers)
+      .map(([name, v]) => ({
+        name,
+        priority: String(v?.priority ?? (name === 'fast' ? 0 : name === 'smart' ? 2 : 1)),
+        desc: v?.desc ?? '',
+        models: v?.models ?? [],
+      }))
+      .sort((a, b) => Number(a.priority) - Number(b.priority) || a.name.localeCompare(b.name)));
     setDefaultModel(config?.orchestrator?.default_model ?? '');
     setToken(authToken());
   }, [props.open, config]);
@@ -143,14 +148,9 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
         }
       }
     }
-    const tierPatch: Record<string, unknown> = {};
-    for (const tier of TIERS) {
-      const m = tiers[tier];
-      if (m) setPath(tierPatch, `orchestrator.tiers.${tier}.models`, [m]);
-    }
     if (defaultModel) setPath(patch, 'orchestrator.default_model', defaultModel);
-    const merged = { ...patch, ...(tierPatch.orchestrator ? { orchestrator: { ...(patch.orchestrator as object | undefined), ...(tierPatch.orchestrator as object) } } : {}) };
-    if (count === 0 && Object.keys(tierPatch).length === 0 && !defaultModel) {
+    const merged = { ...patch };
+    if (count === 0 && !defaultModel) {
       pushToast('info', 'Nothing to save');
       return;
     }
@@ -461,6 +461,65 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     }
   };
 
+  const upTier = (name: string, patch: Partial<{ priority: string; desc: string; models: string[] }>): void =>
+    setTierRows((rows) => rows.map((r) => (r.name === name ? { ...r, ...patch } : r)));
+
+  const moveModel = (name: string, i: number, dir: -1 | 1): void =>
+    setTierRows((rows) => rows.map((r) => {
+      if (r.name !== name) return r;
+      const j = i + dir;
+      if (j < 0 || j >= r.models.length) return r;
+      const ms = [...r.models];
+      const moved = ms.splice(i, 1)[0];
+      if (moved === undefined) return r;
+      ms.splice(j, 0, moved);
+      return { ...r, models: ms };
+    }));
+
+  const addTier = (): void =>
+    setTierRows((rows) => {
+      let name = 'new-tier';
+      let i = 2;
+      while (rows.some((r) => r.name === name)) name = `new-tier-${i++}`;
+      const maxP = rows.reduce((m, r) => Math.max(m, Number(r.priority) || 0), -1);
+      return [...rows, { name, priority: String(maxP + 1), desc: '', models: [] }];
+    });
+
+  const renameTier = (old: string, next: string): void =>
+    setTierRows((rows) => rows.map((r) => (r.name === old ? { ...r, name: next.trim() } : r)));
+
+  const removeTier = async (name: string): Promise<void> => {
+    const res = await api.erase(`orchestrator.tiers.${name}`);
+    setTierRows((rows) => rows.filter((r) => r.name !== name));
+    replaceConfig(await api.getConfig());
+    if (res.ok) pushToast('success', `Tier ${name} removed`);
+    else pushToast('error', `Remove tier ${name} failed`, String(res.status));
+  };
+
+  const saveTiers = async (): Promise<void> => {
+    const tiers: Record<string, unknown> = {};
+    for (const r of tierRows) {
+      if (!r.name.trim()) continue;
+      const entry: Record<string, unknown> = { models: r.models, priority: Number(r.priority) || 0 };
+      if (r.desc.trim()) entry.desc = r.desc.trim();
+      tiers[r.name.trim()] = entry;
+    }
+    if (Object.keys(tiers).length !== tierRows.length || Object.keys(tiers).length === 0) {
+      pushToast('error', 'Every tier needs a name');
+      return;
+    }
+    setSaving(true);
+    const res = await api.putConfig({ orchestrator: { tiers } } as unknown as ConfigPatch);
+    setSaving(false);
+    if (res.ok) {
+      replaceConfig(await api.getConfig());
+      pushToast('success', 'Tiers saved', 'triage prompt + routing updated');
+    } else {
+      const body = res.body as { error?: { message?: string } } | null;
+      pushToast('error', 'Tiers save failed', body?.error?.message ?? String(res.status));
+    }
+  };
+
   const field = (f: Field): React.JSX.Element => {
     const raw = draft[f.path];
     return (
@@ -509,22 +568,63 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
         {tab === 'form' ? (
           <form className="drawer-form" onSubmit={(e) => void save(e)}>
           <div className="drawer-section">
-            <div className="drawer-section-title">Tier models (auto routing)</div>
-            {TIERS.map((t) => (
-              <label key={t} className="field">
-                <span className="field-label">
-                  Tier <code>{t}</code>
-                </span>
-                <select value={tiers[t] ?? ''} onChange={(e) => setTiers((d) => ({ ...d, [t]: e.target.value }))}>
-                  <option value="">— keep current —</option>
-                  {modelNames.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
+            <div className="drawer-section-title">Tiers (auto routing)</div>
+            <div className="prof-note">
+              Priority = routing order (low → light/cheap … high → heavy). Triage classifies into these names;
+              session stickiness one-way upgrades toward higher priority. Models are tried top-to-bottom.
+            </div>
+            {tierRows.map((r) => (
+              <div className="tier-card" key={r.name}>
+                <div className="tier-head">
+                  <input
+                    className="prof-name"
+                    value={r.name}
+                    disabled={r.name === 'auto'}
+                    onChange={(e) => renameTier(r.name, e.target.value)}
+                    onBlur={(e) => renameTier(r.name, e.target.value)}
+                  />
+                  <label className="tier-prio" title="priority">
+                    prio
+                    <input type="number" step={1} value={r.priority} onChange={(e) => upTier(r.name, { priority: e.target.value })} />
+                  </label>
+                  <button className="banner-x" aria-label={`Remove ${r.name}`} onClick={() => void removeTier(r.name)}>✕</button>
+                </div>
+                <input className="prof-name tier-desc" placeholder="description for triage (optional)" value={r.desc} onChange={(e) => upTier(r.name, { desc: e.target.value })} />
+                {r.models.length > 0 ? (
+                  <ul className="tier-models">
+                    {r.models.map((m, i) => (
+                      <li key={m}>
+                        <span className="tier-mi">{i + 1}</span>
+                        <code>{m}</code>
+                        <span className="tier-mtools">
+                          <button className="btn btn-sm" disabled={i === 0} onClick={() => moveModel(r.name, i, -1)} aria-label="raise priority">↑</button>
+                          <button className="btn btn-sm" disabled={i === r.models.length - 1} onClick={() => moveModel(r.name, i, 1)} aria-label="lower priority">↓</button>
+                          <button className="btn btn-sm" onClick={() => upTier(r.name, { models: r.models.filter((x) => x !== m) })} aria-label="remove from tier">✕</button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="dim tier-empty">no models — pick one below</span>
+                )}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const m = e.target.value;
+                    if (m && !r.models.includes(m)) upTier(r.name, { models: [...r.models, m] });
+                  }}
+                >
+                  <option value="">+ add model to {r.name}…</option>
+                  {modelNames.filter((n) => !r.models.includes(n)).map((n) => (
+                    <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
-              </label>
+              </div>
             ))}
+            <div className="prof-actions">
+              <button type="button" className="btn" onClick={addTier}>+ Add tier</button>
+              <button type="button" className="btn btn-primary" onClick={() => void saveTiers()} disabled={saving}>Save tiers</button>
+            </div>
             <label className="field">
               <span className="field-label">
                 Fallback model <span className="field-hint">when orchestrator is down</span>

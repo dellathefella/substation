@@ -2087,3 +2087,89 @@ code {
 .hc-bad {
   color: #fca5a5;
 }
+
+/* ---------- tiers editor ---------- */
+
+.tier-card {
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  padding: 9px 11px;
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tier-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tier-prio {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--tx-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tier-prio input,
+.tier-desc,
+.tier-card select {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx);
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+
+.tier-prio input {
+  width: 58px;
+}
+
+.tier-models {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tier-models li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--tx);
+}
+
+.tier-mi {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 9px;
+  color: #93c5fd;
+}
+
+.tier-mtools {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.tier-empty {
+  font-size: 11px;
+}

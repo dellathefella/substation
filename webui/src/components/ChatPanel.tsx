@@ -24,8 +24,19 @@ export function ChatPanel(): React.JSX.Element {
   const pushToast = useStore((s) => s.pushToast);
   const status = useStore((s) => s.status);
   const cards = useStore((s) => s.models);
+  const config = useStore((s) => s.config);
   const routerOn = (status as { auto_router?: string } | null)?.auto_router !== 'disabled';
-  const pins: string[] = routerOn ? ['auto', 'auto-fast', 'auto-smart'] : cards.map((m) => m.name);
+  const tierNames = Object.keys(config?.orchestrator?.tiers ?? {})
+    .sort((a, b) => {
+      const p = (n: string): number => {
+        const v = config?.orchestrator?.tiers?.[n]?.priority;
+        if (typeof v === 'number') return v;
+        return n === 'fast' ? 0 : n === 'smart' ? 2 : 1;
+      };
+      return p(a) - p(b) || a.localeCompare(b);
+    })
+    .map((t) => `auto-${t}`);
+  const pins: string[] = routerOn ? ['auto', ...tierNames] : cards.map((m) => m.name);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);

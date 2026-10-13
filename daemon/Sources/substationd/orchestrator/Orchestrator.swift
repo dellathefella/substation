@@ -103,19 +103,34 @@ public struct Orchestrator: Sendable {
         return local.max(by: { $0.sizeGB < $1.sizeGB })
     }
 
-    public static func heuristicTier(_ prompt: String) -> (String, [String]) {        let hasCode = prompt.contains("```") || prompt.lowercased().contains("code")
-        if prompt.count > 600 || hasCode { return ("smart", ["len:\(prompt.count)", "code:\(hasCode)"]) }
-        if prompt.count < 80 { return ("fast", ["len:\(prompt.count)"]) }
-        return ("balanced", ["len:\(prompt.count)"])
+    public static func heuristicTier(_ prompt: String, names: [String]) -> (String, [String]) {
+        let hasCode = prompt.contains("```") || prompt.lowercased().contains("code")
+        let lightest = names.first ?? "fast"
+        let heaviest = names.last ?? "smart"
+        let middle = names.count > 2 ? names[names.count / 2] : heaviest
+        if prompt.count > 600 || hasCode { return (heaviest, ["len:\(prompt.count)", "code:\(hasCode)"]) }
+        if prompt.count < 80 { return (lightest, ["len:\(prompt.count)"]) }
+        return (middle, ["len:\(prompt.count)"])
     }
 
     public func triage(_ userText: String, cfg: ConfigSnapshot) async -> TierDecision {
         let t0 = Date()
         let compact = String(userText.prefix(1200))
+        let names = cfg.tierNames.isEmpty ? ["fast", "balanced", "smart"] : cfg.tierNames
+        let descs: [String] = names.map { n in
+            let d = cfg.tierDesc(n)
+            if !d.isEmpty { return "\(n)=\(d)" }
+            switch n {
+            case "fast": return "fast=trivial/short"
+            case "balanced": return "balanced=normal Q&A/writing"
+            case "smart": return "smart=code/complex/reasoning/long"
+            default: return "\(n)=\(n) tier"
+            }
+        }
         let prompt = """
         Classify the USER REQUEST into one tier. Reply ONLY JSON:
-        {"tier":"fast"|"balanced"|"smart","confidence":0..1,"signals":[".."]}
-        fast=trivial/short, balanced=normal Q&A/writing, smart=code/complex/reasoning/long.
+        {"tier":"<one of: \(names.joined(separator: ", "))>","confidence":0..1,"signals":[".."]}
+        \(descs.joined(separator: ", "))
         USER REQUEST: \(compact)
         """
         let body: JSONValue = .object([
@@ -139,7 +154,7 @@ public struct Orchestrator: Sendable {
             if status == 200,
                let content = val?["choices"]?[0]?["message"]?["content"]?.stringValue,
                let parsed = Self.parseTriageJSON(content),
-               let tier = parsed["tier"]?.stringValue, ["fast", "balanced", "smart"].contains(tier)
+               let tier = parsed["tier"]?.stringValue, cfg.tierNames.contains(tier)
             {
                 return TierDecision(
                     tier: tier,
@@ -150,7 +165,7 @@ public struct Orchestrator: Sendable {
                 )
             }
         } catch {}
-        let (tier, signals) = Self.heuristicTier(userText)
+        let (tier, signals) = Self.heuristicTier(userText, names: cfg.tierNames.isEmpty ? ["fast", "balanced", "smart"] : cfg.tierNames)
         return TierDecision(tier: tier, confidence: 0.5, method: "heuristic",
                             ms: Int(Date().timeIntervalSince(t0) * 1000), signals: signals)
     }
@@ -263,9 +278,15 @@ public struct Orchestrator: Sendable {
                     ("default_model", .string(d)),
                 ])
             }
-        case "auto-fast": decision = TierDecision(tier: "fast", confidence: 1, method: "model", ms: 0, signals: ["pinned"])
-        case "auto-smart": decision = TierDecision(tier: "smart", confidence: 1, method: "model", ms: 0, signals: ["pinned"])
-        default: forcedTier = cfg.model(virtual)?.tier ?? "balanced"; decision = TierDecision(tier: forcedTier!, confidence: 1, method: "model", ms: 0, signals: ["pinned-model"])
+        default:
+            if virtual.hasPrefix("auto-"), cfg.tierNames.contains(String(virtual.dropFirst(5))) {
+                let t = String(virtual.dropFirst(5))
+                forcedTier = t
+                decision = TierDecision(tier: t, confidence: 1, method: "model", ms: 0, signals: ["pinned-tier"])
+            } else {
+                forcedTier = cfg.model(virtual)?.tier ?? "balanced"
+                decision = TierDecision(tier: forcedTier!, confidence: 1, method: "model", ms: 0, signals: ["pinned-model"])
+            }
         }
         await events.publish("triage.decision", [
             ("id", .string(requestId)),
@@ -289,11 +310,11 @@ public struct Orchestrator: Sendable {
                 pinned = await sessions.pinned(key, ttlSeconds: cfg.sessionStickSeconds)
             }
             if let key = sessionKey, !key.isEmpty, let pinned {
-                let upgrading = SessionActor.rank(of: tier) > pinned.rank
+                let upgrading = cfg.tierRank(tier) > pinned.rank
                     && decision.confidence >= cfg.triageUpgradeConfidence
                 if upgrading, let candidate {
                     modelName = candidate
-                    await sessions.pin(key, model: candidate, tier: tier, rank: SessionActor.rank(of: tier))
+                    await sessions.pin(key, model: candidate, tier: tier, rank: cfg.tierRank(tier))
                 } else {
                     tier = pinned.tier
                     modelName = pinned.model
@@ -303,7 +324,7 @@ public struct Orchestrator: Sendable {
             } else if let candidate {
                 modelName = candidate
                 if let key = sessionKey, !key.isEmpty {
-                    await sessions.pin(key, model: candidate, tier: tier, rank: SessionActor.rank(of: tier))
+                    await sessions.pin(key, model: candidate, tier: tier, rank: cfg.tierRank(tier))
                 }
             }
         }
@@ -380,7 +401,7 @@ public struct Orchestrator: Sendable {
             ])
             await metrics.increment("routed_total")
             if let key = sessionKey, !key.isEmpty {
-                await sessions.pin(key, model: modelName, tier: tier, rank: SessionActor.rank(of: tier))
+                await sessions.pin(key, model: modelName, tier: tier, rank: cfg.tierRank(tier))
             }
             return RouteInfo(
                 requestId: requestId, virtualModel: virtual, tier: tier,
@@ -430,8 +451,10 @@ public struct Orchestrator: Sendable {
 
         // 6) Prefetch: low-confidence triage may be wrong → warm the next tier.
         if decision.confidence < cfg.triageUpgradeConfidence, virtual == "auto" {
-            let nextTier = tier == "fast" ? "balanced" : "smart"
-            if let nextName = cfg.tiers[nextTier]?.first, let nextModel = cfg.model(nextName) {
+            let names = cfg.tierNames
+            let idx = names.firstIndex(of: tier) ?? -1
+            let nextTier = idx + 1 < names.count ? names[idx + 1] : names.last
+            if let nextTier, nextTier != tier, let nextName = cfg.tiers[nextTier]?.first, let nextModel = cfg.model(nextName) {
                 let engines = self.engines
                 let cfgNow = cfg
                 let ev = self.events

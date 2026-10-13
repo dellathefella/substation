@@ -5,6 +5,7 @@ import type {
   DiscoveryPeer,
   ModelCard,
   ModelMetrics,
+  NodeInfo,
   RuntimeConfig,
   WsFrame,
 } from './types.js';
@@ -206,4 +207,6 @@ export const api = {
   unjoin: (node: string): Promise<AdminResult> => post(`/api/cluster/unjoin?node=${encodeURIComponent(node)}`),
   rpcSelf: (start: boolean): Promise<AdminResult> => post('/api/cluster/rpc-self', { start: start }),
   rpcPeer: (nodeId: string, start: boolean): Promise<AdminResult> => post('/api/cluster/rpc-peer', { node_id: nodeId, start: start }),
+  erase: (path: string): Promise<AdminResult> => post('/api/admin/erase', { path }),
+  nodes: (): Promise<NodeInfo[]> => getArray<NodeInfo>('/api/nodes'),
 };

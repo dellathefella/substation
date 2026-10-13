@@ -21,6 +21,24 @@ export interface NodeHealth {
   ts: number;
 }
 
+export interface NodeInfo {
+  id: string;
+  name: string;
+  ip: string;
+  agent_port: number;
+  rpc_port: number;
+  healthy: boolean;
+  joined_ms: number;
+  health?: {
+    ram_used_gb?: number;
+    ram_total_gb?: number;
+    gpu_pct?: number;
+    rpc_up?: boolean;
+    runners?: RunnerState[];
+  } | null;
+  link?: { kind?: string; rtt_ms?: number; mbps?: number; rdma?: boolean } | null;
+}
+
 export interface DaemonStatus {
   state: string;
   uptime_s: number;
@@ -138,7 +156,7 @@ export interface RuntimeConfig {
     default_model?: string;
     idle_load_only?: boolean;
     default_ctx?: number;
-    tiers?: Record<string, { models?: string[] }>;
+    tiers?: Record<string, { models?: string[]; priority?: number; desc?: string }>;
   };
   engines?: {
     llama_server?: string;

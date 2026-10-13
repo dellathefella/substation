@@ -96,6 +96,32 @@ public struct ConfigSnapshot: Sendable {
         return out
     }
 
+    /// Tier priority: lower = lighter/cheaper. Built-in trio keeps its
+    /// historic order when `priority` is unset.
+    public func tierPriority(_ name: String) -> Int {
+        if let p = tree["orchestrator"]?["tiers"]?[name]?["priority"]?.intValue { return p }
+        switch name {
+        case "fast": return 0
+        case "balanced": return 1
+        case "smart": return 2
+        default: return 1
+        }
+    }
+
+    /// Tier names ordered lightest → heaviest (priority, then name).
+    public var tierNames: [String] {
+        tiers.keys.sorted { a, b in
+            let pa = tierPriority(a), pb = tierPriority(b)
+            return pa == pb ? a < b : pa < pb
+        }
+    }
+
+    public func tierRank(_ name: String) -> Int { tierNames.firstIndex(of: name) ?? 1 }
+
+    public func tierDesc(_ name: String) -> String {
+        tree["orchestrator"]?["tiers"]?[name]?["desc"]?.stringValue ?? ""
+    }
+
     public var modelsDir: String { Self.expandPath(tree["engines"]?["models_dir"]?.stringValue ?? "./models") }
 
     public var models: [CatalogModel] {

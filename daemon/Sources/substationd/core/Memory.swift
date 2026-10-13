@@ -4,6 +4,9 @@ import Darwin
 public struct MemInfo: Sendable {
     public var freeGB: Double
     public var totalGB: Double
+    /// "Real" pressure — app + wired + compressed. Excludes file-backed
+    /// (cached file) pages, which macOS hands back instantly under pressure.
+    public var usedGB: Double
 }
 
 /// vm_stat + sysctl hw.memsize, cached 1.5s.
@@ -30,32 +33,34 @@ public actor Memory {
         if let c = cached, let at = cachedAt, Date().timeIntervalSince(at) < 1.5 {
             return c
         }
-        let info = MemInfo(freeGB: Self.freeGB(), totalGB: Self.totalGB)
+        let info = Self.sample()
         cached = info
         cachedAt = Date()
         return info
     }
 
-    /// (free + speculative) pages × page size, via `vm_stat` for exact parity
-    /// with Activity Monitor semantics.
-    private static func freeGB() -> Double {
-        let pageSize = pageSize
-        var free = 0.0
-        if let out = ProcessRunner.run(["/usr/bin/vm_stat"], timeout: 2) {
-            for line in out.split(separator: "\n") {
-                let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-                guard parts.count >= 3, parts[0] == "Pages" else { continue }
-                let key = String(parts[1]).replacingOccurrences(of: ":", with: "")
-                let raw = String(parts[2]).replacingOccurrences(of: ".", with: "")
-                guard let v = Double(raw) else { continue }
-                if key == "free" || key == "speculative" || key == "purgeable" {
-                    free += v * pageSize
-                }
+    /// Activity-Monitor semantics: used = app(internal − purgeable) + wired +
+    /// compressed. File-backed pages (disk cache) are NOT "used" — macOS frees
+    /// them on demand — so `freeGB` here means AVAILABLE, not truly idle pages.
+    private static func sample() -> MemInfo {
+        let total = totalGB
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
             }
-        } else {
-            free = Self.totalGB * 1_073_741_824 * 0.25 // conservative fallback
         }
-        return max(0, free / 1_073_741_824)
+        guard kr == KERN_SUCCESS, pageSize > 0 else {
+            return MemInfo(freeGB: total * 0.25, totalGB: total, usedGB: total * 0.75)
+        }
+        let gb = pageSize / 1_073_741_824
+        let internalPages = Double(stats.internal_page_count) * gb
+        let purgeable = Double(stats.purgeable_count) * gb
+        let wired = Double(stats.wire_count) * gb
+        let compressed = Double(stats.compressor_page_count) * gb
+        let used = max(0, min(total, internalPages - purgeable + wired + compressed))
+        return MemInfo(freeGB: max(0, total - used), totalGB: total, usedGB: used)
     }
 }
 

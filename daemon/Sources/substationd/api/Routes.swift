@@ -66,7 +66,7 @@ public enum Routes {
             let orchUp = await kit.engines.orchestratorReady(cfg: cfg)
             var data: [JSONValue] = []
             if cfg.orchestratorEnabled {
-                data += ["auto", "auto-fast", "auto-smart"].map { name in
+                data += (["auto"] + cfg.tierNames.map { "auto-\($0)" }).map { name in
                     .object([
                         "id": .string(name),
                         "object": .string("model"),
@@ -491,6 +491,25 @@ public enum Routes {
                 "node": .string(nodeId), "start": .bool(start),
             ]))
             return jsonResponse(val ?? .object(["rpc_up": .bool(start)]))
+        }
+
+        // Erase a config subtree the merge-based PUT cannot express
+        // (currently: custom tiers). Locked to orchestrator.tiers.<one-segment>.
+        app.on(.POST, "api", "admin", "erase", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let body = try await Routes.jsonBody(req)
+            let path = body["path"]?.stringValue ?? ""
+            let parts = path.split(separator: ".")
+            guard path.hasPrefix("orchestrator.tiers."), parts.count == 3 else {
+                return jsonResponse(.object(["error": .object([
+                    "message": .string("only orchestrator.tiers.<name> paths may be erased"), "code": .string("bad_request"),
+                ])]), status: .badRequest)
+            }
+            let existed = await kit.cfg.removePath(path)
+            try? await kit.events.publish("config.changed", .object([
+                "keys": .array([.string("orchestrator")]), "erased": .string(path),
+            ]))
+            return jsonResponse(.object(["ok": .bool(true), "existed": .bool(existed)]))
         }
 
         // Unjoin a single node (?node=id) or the whole cluster (no param).

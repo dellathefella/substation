@@ -31,10 +31,13 @@ public enum ConfigDefaults {
 
     [orchestrator.tiers.fast]
     models = ["qwen2.5-1.5b"]
+    priority = 0
     [orchestrator.tiers.balanced]
     models = ["qwen2.5-7b"]
+    priority = 1
     [orchestrator.tiers.smart]
     models = ["qwen2.5-7b"]
+    priority = 2
 
     [engines]
     llama_server = "./third_party/llama.cpp/build/bin/llama-server"
