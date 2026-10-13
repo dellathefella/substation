@@ -2518,3 +2518,151 @@ code {
   align-items: center;
   gap: 8px;
 }
+
+/* ---------- deploy modal ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 16, 0.66);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.modal {
+  width: min(620px, 92vw);
+  max-height: 84vh;
+  overflow-y: auto;
+  background: var(--panel, #0f1522);
+  border: 1px solid var(--line, rgba(61, 77, 105, 0.5));
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.modal-head h3 { margin: 0; font-size: 14px; }
+.modal-head .dim { flex: 1; }
+.modal-body { display: flex; flex-direction: column; gap: 8px; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.hf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.hf-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  border: 1px solid var(--line, rgba(61, 77, 105, 0.4));
+  border-radius: 7px;
+  background: transparent;
+  color: var(--tx, #dbe4f3);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.hf-item:hover { border-color: #3b82f6; }
+.hf-item.on { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
+.hf-err { color: #f87171; font-size: 12px; }
+.hf-mmrow { display: flex; align-items: center; gap: 8px; }
+.hf-field { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.hf-field > span { width: 70px; color: var(--tx-faint, #7c8aa5); }
+.hf-dl-name { font-size: 12px; word-break: break-all; }
+.hf-bar {
+  height: 8px;
+  border-radius: 5px;
+  background: rgba(61, 77, 105, 0.3);
+  overflow: hidden;
+}
+.hf-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #22d3ee);
+  transition: width 0.6s ease;
+}
+
+/* ---------- routing graph ---------- */
+.graph-view { padding: 12px 14px; max-width: 1080px; margin: 0 auto; width: 100%; }
+.graph-wrap {
+  position: relative;
+  height: 430px;
+}
+.graph-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.graph-flow { animation: graphflow 1.1s linear infinite; opacity: 0.9; }
+.graph-flow.cache { animation-duration: 2.2s; }
+@keyframes graphflow { to { stroke-dashoffset: -32; } }
+.graph-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 150px;
+  pointer-events: none;
+}
+.graph-col-v { left: 8px; }
+.graph-col-t { left: 50%; transform: translateX(-50%); }
+.graph-col-m { right: 8px; }
+.gnode {
+  position: absolute;
+  transform: translateY(-50%);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line, rgba(61, 77, 105, 0.5));
+  background: var(--panel, #0f1522);
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.gnode em { font-style: normal; color: var(--tx-faint, #7c8aa5); font-size: 11px; }
+.gnode-m { font-size: 11px; }
+.graph-axis {
+  position: absolute;
+  bottom: 2px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx-faint, #7c8aa5);
+}
+.graph-axis-v { left: 12px; }
+.graph-axis-t { left: 50%; transform: translateX(-50%); }
+.graph-axis-m { right: 12px; }
+
+/* ---------- info tab ---------- */
+.info-view { padding: 12px 14px; max-width: 1080px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 12px; }
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 18px;
+  font-size: 12px;
+}
+.info-grid > span { font-size: 11px; }
+.ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tbl th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx-faint, #7c8aa5);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line, rgba(61, 77, 105, 0.4));
+}
+.tbl td { padding: 5px 8px; border-bottom: 1px solid rgba(61, 77, 105, 0.16); }
+.tbl .num { text-align: right; font-variant-numeric: tabular-nums; }

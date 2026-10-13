@@ -334,8 +334,20 @@ public struct Orchestrator: Sendable {
                 }
             }
         }
+        let hasImages = Self.hasImages(messages)
         if modelName.isEmpty || cfg.model(modelName) == nil {
-            let candidates = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }
+            var candidates = (cfg.tiers[tier] ?? []).compactMap { cfg.model($0) }
+            if hasImages {
+                let vision = candidates.filter { $0.vision }
+                if !vision.isEmpty {
+                    candidates = vision
+                } else {
+                    try? await events.publishDeduped("context.warning", key: "context.warning:\(tier)", [
+                        ("id", .string(requestId)), ("tier", .string(tier)),
+                        ("reason", .string("vision_requested_no_vision_model")),
+                    ])
+                }
+            }
             guard let first = candidates.first(where: { $0.ctx >= needCtx })
                 ?? candidates.max(by: { $0.ctx < $1.ctx }) else {
                 throw EngineError.notFound("no catalog model for tier \(tier)")
@@ -365,6 +377,23 @@ public struct Orchestrator: Sendable {
                     ("reason", .string("no_model_fits_widest_used")),
                 ])
                 modelName = widest.name
+            }
+        }
+        if hasImages {
+            let cur = cfg.model(modelName)
+            if cur?.vision != true {
+                if let visionAlt = (cfg.tiers[tier] ?? []).compactMap({ cfg.model($0) }).first(where: { $0.vision }) {
+                    try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
+                        ("id", .string(requestId)), ("from", .string(modelName)), ("to", .string(visionAlt.name)),
+                        ("reason", .string("vision_upgrade")),
+                    ])
+                    modelName = visionAlt.name
+                } else {
+                    try? await events.publishDeduped("context.warning", key: "context.warning:\(modelName)", [
+                        ("id", .string(requestId)), ("model", .string(modelName)),
+                        ("reason", .string("vision_requested_no_vision_model")),
+                    ])
+                }
             }
         }
         guard let requested = cfg.model(modelName) else {
@@ -522,9 +551,34 @@ public struct Orchestrator: Sendable {
     public static func lastUserText(_ messages: JSONValue?) -> String {
         guard let arr = messages?.arrayValue else { return "" }
         for m in arr.reversed() {
-            if m["role"]?.stringValue == "user", let c = m["content"]?.stringValue { return c }
+            guard m["role"]?.stringValue == "user" else { continue }
+            if let c = m["content"]?.stringValue { return c }
+            if let parts = m["content"]?.arrayValue {
+                let texts = parts.compactMap { p -> String? in
+                    let t = p["text"]?.stringValue
+                    return (t?.isEmpty == false) ? t : nil
+                }
+                if !texts.isEmpty { return texts.joined(separator: "\n") }
+            }
         }
         return ""
+    }
+
+    /// True when any user message carries image content (OpenAI image_url
+    /// or Anthropic image blocks). Vision-capable profiles get routing
+    /// priority for these requests.
+    public static func hasImages(_ messages: JSONValue?) -> Bool {
+        guard let arr = messages?.arrayValue else { return false }
+        for m in arr {
+            guard m["role"]?.stringValue == "user" else { continue }
+            guard let parts = m["content"]?.arrayValue else { continue }
+            for p in parts {
+                let t = p["type"]?.stringValue ?? ""
+                if t == "image_url" || t == "image" || t == "input_image" { return true }
+                if p["image_url"] != nil || p["source"]?.objectValue?["type"]?.stringValue == "base64" { return true }
+            }
+        }
+        return false
     }
 
     static func historyChars(_ messages: JSONValue?) -> Int {

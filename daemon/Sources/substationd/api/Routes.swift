@@ -62,16 +62,19 @@ public struct Kit: Sendable {
     public let pipeline: ChatPipeline
     public let system: System
     public let dataDir: String
+    public let deploy: DeployActor
     public let client = EngineClient()
     public let usage = TokenUsage()
 
     public init(
         cfg: ConfigStore, events: EventActor, metrics: MetricsActor, engines: EngineActor,
         admission: Admission, sessions: SessionActor, cache: ResponseCache, state: DaemonState,
-        chat: ChatActor, nodes: NodesActor, mem: Memory, system: System, dataDir: String
+        chat: ChatActor, nodes: NodesActor, mem: Memory, system: System, dataDir: String,
+        deploy: DeployActor
     ) {
         self.system = system
         self.dataDir = dataDir
+        self.deploy = deploy
         self.cfg = cfg
         self.events = events
         self.metrics = metrics
@@ -603,9 +606,9 @@ public enum Routes {
             guard let (status, val) = try? await kit.client.json(method: "POST", url: url, body: .object([:]), bearer: cfg.authToken, timeout: 15), status < 400 else {
                 return jsonResponse(.object(["error": .object(["message": .string("peer \(nodeId) refused rpc/\(start ? "start" : "stop")"), "code": .string("peer_failed")])]), status: .badGateway)
             }
-            try? await kit.events.publish("cluster.rpc", .object([
+            try? await kit.events.publishDeduped("cluster.rpc", key: "cluster.rpc:\(body["node_id"]?.stringValue ?? "")", .object([
                 "node": .string(nodeId), "start": .bool(start),
-            ]))
+            ]), cooldown: 120, throttle: true)
             return jsonResponse(val ?? .object(["rpc_up": .bool(start)]))
         }
 

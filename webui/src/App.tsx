@@ -6,6 +6,8 @@ import { ClusterStatus } from './components/ClusterStatus.js';
 import { ClusterWizard } from './components/ClusterWizard.js';
 import { LogsPanel } from './components/LogsPanel.js';
 import { CostPanel } from './components/CostPanel.js';
+import { GraphPanel } from './components/GraphPanel.js';
+import { InfoPanel } from './components/InfoPanel.js';
 import { ConnectPanel } from './components/ConnectPanel.js';
 import { Header } from './components/Header.js';
 import type { View } from './components/Header.js';
@@ -81,6 +83,10 @@ export function App(): React.JSX.Element {
           <ClusterStatus />
           <ClusterWizard />
         </main>
+      ) : view === 'graph' ? (
+        <GraphPanel />
+      ) : view === 'info' ? (
+        <InfoPanel />
       ) : view === 'cost' ? (
         <main className="chat-view">
           <CostPanel />

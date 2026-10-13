@@ -210,27 +210,27 @@ public enum LinkProbe {
 
         // llama.cpp GGML RPC is TCP; RDMA is not exercised. Warn per §6.
         if kind != "thunderbolt" {
-            try? await events.publish("cluster.warning", .object([
+            try? await events.publishDeduped("cluster.warning", key: "cluster.warning:\(host):rdma_unavailable", .object([
                 "node": .string(host),
                 "level": .string("warn"),
                 "code": .string("rdma_unavailable"),
                 "msg": .string("RPC split will be TCP-bound; connect a Thunderbolt cable for RDMA."),
-            ]))
+            ]), cooldown: 300, throttle: true)
         } else if rttMs > 1.5 || mbps < 3000 {
-            try? await events.publish("cluster.warning", .object([
+            try? await events.publishDeduped("cluster.warning", key: "cluster.warning:\(host):rdma_not_enabled", .object([
                 "node": .string(host),
                 "level": .string("warn"),
                 "code": .string("rdma_not_enabled"),
                 "msg": .string("RDMA not enabled — llama.cpp RPC over TCP. Expect degraded split-model throughput."),
-            ]))
+            ]), cooldown: 300, throttle: true)
         }
         if rttMs > 8 {
-            try? await events.publish("cluster.warning", .object([
+            try? await events.publishDeduped("cluster.warning", key: "cluster.warning:\(host):high_latency", .object([
                 "node": .string(host),
                 "level": .string("warn"),
                 "code": .string("high_latency"),
                 "msg": .string(String(format: "Link RTT %.1f ms > 8 ms; split placements may stall.", rttMs)),
-            ]))
+            ]), cooldown: 300, throttle: true)
         }
 
         return .object([

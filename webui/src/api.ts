@@ -233,4 +233,63 @@ export const api = {
     get(`/api/logs/${encodeURIComponent(name)}?tail=${tail}`),
   nodeLogs: (node: string, name: string, tail: number): Promise<AdminResult> =>
     get(`/api/cluster/logs?node=${encodeURIComponent(node)}&name=${encodeURIComponent(name)}&tail=${tail}`),
+  llamaInfo: (): Promise<LlamaInfo | null> => getJson<LlamaInfo>('/api/llama'),
+  llamaUpdate: (): Promise<AdminResult> => post('/api/llama/update', {}),
+  hfSearch: (q: string, token: string): Promise<HfRepo[]> => {
+    const t = token ? `&token=${encodeURIComponent(token)}` : '';
+    return getArray<HfRepo>(`/api/hf/search?q=${encodeURIComponent(q)}${t}`);
+  },
+  hfFiles: (repo: string, token: string): Promise<HfFile[]> => {
+    const t = token ? `&token=${encodeURIComponent(token)}` : '';
+    return getArray<HfFile>(`/api/hf/files?repo=${encodeURIComponent(repo)}${t}`);
+  },
+  deploy: (body: Record<string, unknown>): Promise<AdminResult> => post('/api/deployments', body),
+  deployments: (): Promise<DeployJob[]> => getArray<DeployJob>('/api/deployments'),
+  cancelDeployment: (id: string): Promise<AdminResult> => post(`/api/deployments/${encodeURIComponent(id)}/cancel`, {}),
 };
+
+export interface LlamaInfo {
+  binary: string;
+  rpc_binary: string;
+  src: string;
+  git: boolean;
+  head: string;
+  version: { version?: string; commit?: string; raw?: string; error?: string };
+  rpc_up: boolean;
+  engines: LlamaEngine[];
+}
+export interface LlamaEngine {
+  model: string;
+  node: string;
+  port: number;
+  pid: number;
+  split: boolean;
+  rpc_peers: string[];
+  size_gb: number;
+  cache_tokens: number;
+  uptime_s: number;
+  tok_s?: number | null;
+}
+export interface HfRepo {
+  repo: string;
+  downloads: number;
+  gated: boolean;
+  private: boolean;
+}
+export interface HfFile {
+  file: string;
+  size: number;
+  mmproj?: boolean;
+}
+export interface DeployJob {
+  id: string;
+  name: string;
+  repo: string;
+  file: string;
+  tier: string;
+  bytes: number;
+  total: number;
+  state: string;
+  error?: string | null;
+  vision?: boolean;
+}

@@ -29,6 +29,10 @@ public struct CatalogModel: Sendable, Hashable {
     public var kvMBPer1k: Double
     /// llama-server --parallel slots (KV replicated per slot).
     public var slots: Int
+    /// Vision (multimodal) projector file for llama.cpp --mmproj.
+    public var mmproj: String?
+    /// True when the profile can accept image inputs (mmproj present).
+    public var vision: Bool
 }
 
 public struct NodeStatic: Sendable, Hashable {
@@ -172,7 +176,9 @@ public struct ConfigSnapshot: Sendable {
                 proto: m["protocol"]?.stringValue ?? "openai",
                 flags: m["flags"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
                 kvMBPer1k: m["kv_mb_per_1k_ctx"]?.doubleValue ?? 0,
-                slots: m["parallel_slots"]?.intValue ?? 4
+                slots: m["parallel_slots"]?.intValue ?? 4,
+                mmproj: m["mmproj"]?.stringValue.map { Self.normalize(Self.expandPath($0)) },
+                vision: m["vision"]?.boolValue ?? ((m["mmproj"]?.stringValue) != nil)
             )
         } ?? []
     }

@@ -286,16 +286,32 @@ function applyFramesInner(
       case 'request.received': {
         const id = String(d['id'] ?? '');
         if (!id) break;
-        const row = rowFromRequest(id, String(d['virtual_model'] ?? 'auto'), f.ts);
-        rows.set(id, row);
-        feed.unshift(row);
-        feed.splice(FEED_CAP);
-        reqTimes.push(f.ts);
+        const existing = rows.get(id);
+        if (existing) {
+          existing.virtual = String(d['virtual_model'] ?? existing.virtual);
+          existing.ts = Math.min(existing.ts, f.ts);
+          if (existing.phase === 'received' || existing.phase === 'triaged') existing.phase = existing.phase;
+        } else {
+          const row = rowFromRequest(id, String(d['virtual_model'] ?? 'auto'), f.ts);
+          rows.set(id, row);
+          feed.unshift(row);
+          feed.splice(FEED_CAP);
+          reqTimes.push(f.ts);
+        }
         touch();
         break;
       }
       case 'triage.decision': {
-        const row = rows.get(String(d['id'] ?? ''));
+        const rid = String(d['id'] ?? '');
+        if (rid && !rows.has(rid)) {
+          const row = rowFromRequest(rid, 'auto', f.ts);
+          rows.set(rid, row);
+          feed.unshift(row);
+          feed.splice(FEED_CAP);
+          reqTimes.push(f.ts);
+          touch();
+        }
+        const row = rows.get(rid);
         const tier = d['tier'];
         if (isTier(tier)) tierCounts[tier] += 1;
         const conf = typeof d['confidence'] === 'number' ? d['confidence'] : null;

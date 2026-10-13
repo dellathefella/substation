@@ -89,12 +89,15 @@ if role == "node" {
     startBeaconSender(nodeKit)
     NSLog("substationd node agent listening on http://\(snapshot.bind):\(port) (node_id \(nodeKit.nodeId.prefix(8)))")
 } else {
+    let deploy = DeployActor(events: events, cfg: cfg, engines: engines)
     let kit = Kit(
         cfg: cfg, events: events, metrics: metrics, engines: engines, admission: admission,
         sessions: sessions, cache: cache, state: state, chat: chat, nodes: nodes, mem: mem,
-        system: system, dataDir: dataDir
+        system: system, dataDir: dataDir, deploy: deploy
     )
     try Routes.registerController(app, kit)
+    DeployRoutes.register(app, kit, kit.deploy)
+    LlamaInfoRoutes.register(app, kit)
 
     // Static config nodes join the registry when clustering is enabled.
     if snapshot.clusterEnabled {
@@ -155,8 +158,9 @@ func startHeartbeat(_ kit: Kit) {
                 }
                 data["node"] = .string(n.id)
                 data["healthy"] = .bool(sig.healthy)
-                // Feed hygiene: emit on meaningful change, refresh at 15 s max.
-                if sigs[n.id] != sig || now - (lastEmit[n.id] ?? 0) > 15 {
+                // Feed hygiene: emit on meaningful change; periodic refresh
+                // only every 5 min (a stable node must stay silent).
+                if sigs[n.id] != sig || now - (lastEmit[n.id] ?? 0) > 300 {
                     sigs[n.id] = sig
                     lastEmit[n.id] = now
                     await kit.events.publish("node.health", .object(data))

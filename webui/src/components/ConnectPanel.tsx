@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiBase, authHeaders } from '../api.js';
+import { DeployModal } from './DeployModal.js';
 
 interface ConnectorFile {
   name: string;
@@ -30,6 +31,7 @@ function download(name: string, code: string): void {
 }
 
 export function ConnectPanel(): React.JSX.Element {
+  const [deployOpen, setDeployOpen] = useState(false);
   const [info, setInfo] = useState<ConnectorInfo | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -89,10 +91,16 @@ export function ConnectPanel(): React.JSX.Element {
             ))}
           </div>
         </div>
-        <button className="btn btn-sm" onClick={() => void load()}>
-          ⟳ Refresh
-        </button>
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn btn-sm" onClick={() => setDeployOpen(true)}>
+            ↓ Deploy model
+          </button>
+          <button className="btn btn-sm" onClick={() => void load()}>
+            ⟳ Refresh
+          </button>
+        </div>
       </header>
+      <DeployModal open={deployOpen} onClose={() => setDeployOpen(false)} onDeployed={() => setDeployOpen(false)} />
 
       {info.api_key ? (
         <div className="connect-key">

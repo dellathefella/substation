@@ -39,6 +39,13 @@ public actor EngineActor {
     private var triagePid: Int32 = 0
     private var rpcPid: Int32 = 0
     private var lastDecodeRates: [String: Double] = [:]
+    /// Dynamic prompt-cache: per-model total cache tokens forced on the
+    /// next spawn (set by the memory-rebalance loop).
+    private var cacheOverrides: [String: Int] = [:]
+    private var lastBusyAt: [String: Date] = [:]
+    private var lastCacheTune: [String: Date] = [:]
+    /// PID of an rpc-server we did NOT spawn but adopted (orphan listener).
+    private var rpcAdoptedPid: Int32 = 0
 
     private let events: EventActor
     private let metrics: MetricsActor
@@ -126,18 +133,59 @@ public actor EngineActor {
         return await triageHealthy(cfg: cfg)
     }
 
-    public func startRPCSelf(_ cfg: ConfigSnapshot) -> Bool {
-        if rpcPid > 0 { return true }
-        guard FileManager.default.isExecutableFile(atPath: cfg.rpcServer) else { return false }
+    public func startRPCSelf(_ cfg: ConfigSnapshot) async -> Bool {
+        if rpcSelfUp { return true }
+        guard FileManager.default.isExecutableFile(atPath: cfg.rpcServer) else {
+            await events.publishDeduped("cluster.warning", key: "cluster.warning:rpc_bin:\(cfg.rpcPort)", .object([
+                "code": .string("rpc_binary_missing"), "level": .string("err"),
+                "msg": .string("RPC binary not found at \(cfg.rpcServer) — set engines.rpc_server."),
+            ]), cooldown: 300, throttle: true)
+            return false
+        }
+        // A listener already owns the port (orphan from a previous daemon/
+        // agent run): ADOPT it rather than failing on port-in-use forever.
+        if let pid = Self.listenerPid(port: cfg.rpcPort), pid > 0 {
+            rpcPid = 0
+            rpcAdoptedPid = pid
+            await events.publish("rpc.adopted", .object([
+                "port": .jInt(cfg.rpcPort), "pid": .jInt(Int(pid)),
+                "log": .string("logs/rpc-\(cfg.rpcPort).log"),
+            ]))
+            return true
+        }
         rpcPid = spawnProcess(cfg.rpcServer, args: ["--host", "0.0.0.0", "--port", String(cfg.rpcPort)], name: "rpc-\(cfg.rpcPort)")
+        if rpcPid <= 0 {
+            await events.publishDeduped("cluster.warning", key: "cluster.warning:rpc_spawn:\(cfg.rpcPort)", .object([
+                "code": .string("rpc_spawn_failed"), "level": .string("err"),
+                "msg": .string("Could not start RPC server — see logs/rpc-\(cfg.rpcPort).log"),
+            ]), cooldown: 300, throttle: true)
+        }
         return rpcPid > 0
     }
 
     public func stopRPCSelf() {
         if rpcPid > 0 { kill(rpcPid, SIGTERM); rpcPid = 0 }
+        if rpcAdoptedPid > 0 { kill(rpcAdoptedPid, SIGTERM); rpcAdoptedPid = 0 }
     }
 
-    public var rpcSelfUp: Bool { rpcPid > 0 && kill(rpcPid, 0) == 0 }
+    /// PID of the process LISTENing on `port` (lsof), if any.
+    static func listenerPid(port: Int) -> Int32? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        p.arguments = ["-tiTCP:\(port)", "-sTCP:LISTEN"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run(); p.waitUntilExit() } catch { return nil }
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return out.split(separator: "\n").first.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
+    public var rpcSelfUp: Bool {
+        if rpcPid > 0, kill(rpcPid, 0) == 0 { return true }
+        if rpcAdoptedPid > 0, kill(rpcAdoptedPid, 0) == 0 { return true }
+        return false
+    }
 
     // MARK: - Ensure loaded
 
@@ -209,14 +257,15 @@ public actor EngineActor {
         var engine: RunningEngine
         if node == "local" {
             let port = nextPort(cfg)
+            let cacheTokens = await cacheForSpawn(model)
             var args = [
                 "-m", model.gguf,
                 "--alias", model.name,
                 "--host", "127.0.0.1",
                 "--port", String(port),
-                "-c", String(model.ctx * 4),
+                "-c", String(cacheTokens),
                 "--cache-reuse", "256",
-                "--parallel", "4",
+                "--parallel", String(max(1, model.slots)),
                 "--metrics",
             ]
             if isSplit {
@@ -227,14 +276,22 @@ public actor EngineActor {
                 args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", weights]
             }
             args += model.flags
+            if let mm = model.mmproj, FileManager.default.fileExists(atPath: mm) {
+                args += ["--mmproj", mm]
+            }
             let pid = spawnProcess(cfg.llamaServer, args: args, name: "llama-\(model.name)-\(port)")
             if pid == 0 { throw EngineError.notFound("cannot spawn \(cfg.llamaServer)") }
             engine = RunningEngine(
                 model: model.name, node: "local", host: "127.0.0.1", port: port,
                 pid: pid, split: isSplit, rpcPeers: splitPeers, placement: model.placement,
-                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: model.ctx
+                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens
             )
             usedPorts.insert(port)
+            do { try await waitReady(engine, cfg: cfg) } catch {
+                kill(pid, SIGTERM)
+                usedPorts.remove(port)
+                throw error
+            }
         } else {
             guard let n = cfg.node(node) else { throw EngineError.notFound("node \(node)") }
             let port = nextPort(cfg, remote: true)
@@ -289,29 +346,37 @@ public actor EngineActor {
             return existing
         }
         try await evictIfNeeded(forGB: model.sizeGB, cfg: cfg)
+        let cacheTokens = await cacheForSpawn(model)
         var args = [
             "-m", model.gguf,
             "--alias", model.name,
             "--host", "0.0.0.0",
             "--port", String(port),
-            "-c", String(model.ctx),
+            "-c", String(cacheTokens),
             "--cache-reuse", "256",
-            "--parallel", "4",
+            "--parallel", String(max(1, model.slots)),
             "--metrics",
         ]
         if !rpc.isEmpty {
             args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", tensorSplit.joined(separator: ",")]
         }
         args += model.flags
+        if let mm = model.mmproj, FileManager.default.fileExists(atPath: mm) {
+            args += ["--mmproj", mm]
+        }
         let pid = spawnProcess(cfg.llamaServer, args: args, name: "llama-\(model.name)-\(port)")
         if pid == 0 { throw EngineError.notFound("cannot spawn \(cfg.llamaServer)") }
         var engine = RunningEngine(
             model: model.name, node: "local", host: HostInfo.primaryIP(), port: port,
             pid: pid, split: !rpc.isEmpty, rpcPeers: rpc, placement: model.placement,
-            loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: model.ctx
+            loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens
         )
         usedPorts.insert(port)
-        try await waitReady(engine, cfg: cfg)
+        do { try await waitReady(engine, cfg: cfg) } catch {
+            kill(pid, SIGTERM)
+            usedPorts.remove(port)
+            throw error
+        }
         engine.loadedAt = Date()
         engines[key] = engine
         await events.publish("model.loaded", [
@@ -340,8 +405,36 @@ public actor EngineActor {
 
     private func nextPort(_ cfg: ConfigSnapshot, remote: Bool = false) -> Int {
         var p = cfg.basePort
-        while usedPorts.contains(p) || engines.values.contains(where: { $0.port == p }) { p += 1 }
+        while usedPorts.contains(p) || engines.values.contains(where: { $0.port == p }) || tcpListening(p) { p += 1 }
         return p
+    }
+
+    private var listeningCache: (at: Date, ports: Set<Int>) = (Date.distantPast, [])
+
+    /// Ports with a live LISTEN socket (orphans from previous daemon runs
+    /// must never be picked). Cached 5 s so spawns stay snappy.
+    private func tcpListening(_ port: Int) -> Bool {
+        if Date().timeIntervalSince(listeningCache.at) > 5 {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+            p.arguments = ["-Pan", "-iTCP", "-sTCP:LISTEN"]
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            p.standardError = FileHandle.nullDevice
+            var ports = Set<Int>()
+            do {
+                try p.run(); p.waitUntilExit()
+                let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                for line in out.split(separator: "\n") {
+                    if let colon = line.lastIndex(of: ":") {
+                        let tail = line[line.index(after: colon)...]
+                        if let n = Int(tail.trimmingCharacters(in: .whitespaces)) { ports.insert(n) }
+                    }
+                }
+            } catch {}
+            listeningCache = (Date(), ports)
+        }
+        return listeningCache.ports.contains(port)
     }
 
     // MARK: - Unload / evict
@@ -379,6 +472,7 @@ public actor EngineActor {
             ])
             return true
         } catch {
+            engines[key] = e
             await events.publish("engine.heal_failed", [
                 ("model", .string(e.model)), ("node", .string(e.node)), ("error", .string("\(error)")),
             ])
@@ -424,9 +518,50 @@ public actor EngineActor {
         }
     }
 
+    // MARK: - Dynamic prompt cache
+
+    /// Total KV cache tokens to hand llama-server, derived from CURRENT
+    /// memory headroom instead of the static ctx config: every slot gets
+    /// an even share of the headroom budget (weights excluded when the
+    /// model is not yet resident, headroom kept for the OS), clamped to
+    /// [2048, model.ctx] per slot.
+    public func cacheTokens(for model: CatalogModel, loaded: Bool) async -> Int {
+        let slots = max(1, model.slots)
+        let kv = model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
+        let info = await mem.read()
+        let free = loaded ? info.freeGB : info.freeGB - model.sizeGB
+        let budgetMB = max(2048.0, (free - 2.0) * 1024.0)
+        let perSlot = Int(budgetMB / Double(slots) / kv) * 1024
+        let capped = min(max(perSlot, 2048), model.ctx)
+        return capped * slots
+    }
+
+    private func cacheForSpawn(_ model: CatalogModel) async -> Int {
+        if let o = cacheOverrides[model.name] { return o }
+        return await cacheTokens(for: model, loaded: false)
+    }
+
+    /// Dashboard view of the current cache target for a model.
+    public func currentCacheTarget(_ model: CatalogModel) async -> Int {
+        if let o = cacheOverrides[model.name] { return o }
+        return await cacheTokens(for: model, loaded: true)
+    }
+
+    private func reTuneCache(_ e: RunningEngine, desired: Int, cfg: ConfigSnapshot) async {
+        cacheOverrides[e.model] = desired
+        lastCacheTune[e.key] = Date()
+        if await respawn(e, cfg: cfg) {
+            await events.publishDeduped("engine.cache", key: "engine.cache:\(e.key)", .object([
+                "model": .string(e.model), "from": .jInt(e.ctx), "to": .jInt(desired),
+                "reason": .string("memory_rebalance"),
+            ]), cooldown: 600, throttle: true)
+        }
+    }
+
     // MARK: - Polling
 
     public func startLoops(cfg: ConfigSnapshot, cfgStore: ConfigStore) {
+        startCacheLoop(cfgStore: cfgStore)
         let events = self.events
         let metrics = self.metrics
         let client = self.client
@@ -447,6 +582,29 @@ public actor EngineActor {
         }
     }
 
+    /// Idle engines get their prompt cache re-sized when memory headroom
+    /// drifted more than 35% from the current sizing. Never disturbs busy
+    /// engines (90 s decode quiet), at most once per 10 min per engine.
+    private func startCacheLoop(cfgStore: ConfigStore) {
+        Task.detached(priority: .background) {
+            while true {
+                try? await Task.sleep(for: .seconds(30))
+                let cfgNow = await cfgStore.snapshot
+                for e in await self.listLive() where e.node == "local" {
+                    guard let model = cfgNow.model(e.model), model.kind == "local" else { continue }
+                    let busy = await self.lastBusyAt[e.key].map { Date().timeIntervalSince($0) < 90 } ?? false
+                    let tunedRecently = await self.lastCacheTune[e.key].map { Date().timeIntervalSince($0) < 600 } ?? false
+                    if busy || tunedRecently { continue }
+                    let desired = await self.cacheTokens(for: model, loaded: true)
+                    let cur = max(1, e.ctx)
+                    let delta = Double(abs(desired - cur)) / Double(max(desired, cur))
+                    guard delta > 0.35 else { continue }
+                    await self.reTuneCache(e, desired: desired, cfg: cfgNow)
+                }
+            }
+        }
+    }
+
     private func sampleEngine(_ engine: RunningEngine, cfg: ConfigSnapshot) async {
         // Engine metrics (Prometheus text)
         if let (status, text) = try? await client.getText(engine.baseURL + "/metrics", timeout: 3), status == 200 {
@@ -459,6 +617,7 @@ public actor EngineActor {
                         let tokS = dTok / dSec
                         lastMetrics[engine.key] = (tok, sec)
                         lastDecodeRates[engine.key] = tokS
+                        if dTok >= 64 { lastBusyAt[engine.key] = Date() }
                         await metrics.setEngineTokS(engine.key, (tokS * 100).rounded() / 100)
                         if engine.split {
                             await events.publish("rpc.sample", [
