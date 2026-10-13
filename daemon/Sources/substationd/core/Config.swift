@@ -75,8 +75,8 @@ public struct ConfigSnapshot: Sendable {
     public var idleLoadOnly: Bool { tree["orchestrator"]?["idle_load_only"]?.boolValue ?? true }
     public var startOnLogin: Bool { tree["daemon"]?["start_on_login"]?.boolValue ?? false }
 
-    public var llamaServer: String { tree["engines"]?["llama_server"]?.stringValue ?? "llama-server" }
-    public var rpcServer: String { tree["engines"]?["rpc_server"]?.stringValue ?? "rpc-server" }
+    public var llamaServer: String { Self.expandPath(tree["engines"]?["llama_server"]?.stringValue ?? "llama-server") }
+    public var rpcServer: String { Self.expandPath(tree["engines"]?["rpc_server"]?.stringValue ?? "rpc-server") }
     public var basePort: Int { tree["engines"]?["base_port"]?.intValue ?? 8940 }
     public var startupTimeoutS: Int { tree["engines"]?["startup_timeout_s"]?.intValue ?? 180 }
     public var idleEvictSeconds: Int { tree["engines"]?["idle_evict_seconds"]?.intValue ?? 900 }

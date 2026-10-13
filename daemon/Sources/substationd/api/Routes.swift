@@ -63,6 +63,7 @@ public struct Kit: Sendable {
     public let system: System
     public let dataDir: String
     public let deploy: DeployActor
+    public let webuiDir: String
     public let client = EngineClient()
     public let usage = TokenUsage()
 
@@ -70,11 +71,13 @@ public struct Kit: Sendable {
         cfg: ConfigStore, events: EventActor, metrics: MetricsActor, engines: EngineActor,
         admission: Admission, sessions: SessionActor, cache: ResponseCache, state: DaemonState,
         chat: ChatActor, nodes: NodesActor, mem: Memory, system: System, dataDir: String,
-        deploy: DeployActor
+        deploy: DeployActor,
+        webuiDir: String = "webui/dist"
     ) {
         self.system = system
         self.dataDir = dataDir
         self.deploy = deploy
+        self.webuiDir = webuiDir
         self.cfg = cfg
         self.events = events
         self.metrics = metrics
@@ -790,7 +793,7 @@ public enum Routes {
 
         // Root fallback when webui/dist has no index.html.
         app.get { req async throws -> Response in
-            let dist = (await kit.cfg.snapshot).webuiDist + "/index.html"
+            let dist = kit.webuiDir + "/index.html"
             if FileManager.default.fileExists(atPath: dist),
                let data = FileManager.default.contents(atPath: dist)
             {

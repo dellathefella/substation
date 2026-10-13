@@ -69,6 +69,51 @@ final class AppModel: ObservableObject {
         Task { await refresh() }
     }
 
+    // MARK: Bundled daemon
+
+    private var spawnTried = false
+
+    /// When launched as Substation.app and no daemon answers, spawn the
+    /// bundled substationd against ~/Library/Application Support/Substation.
+    func maybeSpawnBundledDaemon() {
+        guard !spawnTried else { return }
+        spawnTried = true
+        guard let res = Bundle.main.resourceURL else { return }
+        let exe = res.appendingPathComponent("substationd")
+        guard FileManager.default.isExecutableFile(atPath: exe.path) else { return }
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Substation", isDirectory: true)
+        else { return }
+        let fm = FileManager.default
+        for sub in ["state", "models", "logs"] {
+            try? fm.createDirectory(at: support.appendingPathComponent(sub, isDirectory: true), withIntermediateDirectories: true)
+        }
+        let cfg = support.appendingPathComponent("config.toml")
+        if !fm.fileExists(atPath: cfg.path), fm.fileExists(atPath: res.appendingPathComponent("default-config.toml").path) {
+            try? fm.copyItem(at: res.appendingPathComponent("default-config.toml"), to: cfg)
+        }
+        let log = support.appendingPathComponent("logs/daemon.log")
+        if !fm.fileExists(atPath: log.path) { fm.createFile(atPath: log.path, contents: nil) }
+        let fh = FileHandle(forWritingAtPath: log.path)
+        fh?.seekToEndOfFile()
+        let p = Process()
+        p.executableURL = exe
+        p.currentDirectoryURL = support
+        p.arguments = [
+            "--config", cfg.path,
+            "--data", support.appendingPathComponent("state").path,
+            "--webui", res.appendingPathComponent("webui").path,
+        ]
+        var env = ProcessInfo.processInfo.environment
+        env["SUBSTATION_APP_RES"] = res.path
+        p.environment = env
+        p.standardOutput = fh
+        p.standardError = fh
+        do { try p.run() } catch {
+            NSLog("substation: bundled daemon spawn failed: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: Polling
 
     func refresh() async {
@@ -85,6 +130,7 @@ final class AppModel: ObservableObject {
         let statusFailed = statusValue == nil
         let metricsFailed = metricsValue == nil
         self.offline = statusFailed && metricsFailed
+        if statusFailed && metricsFailed { maybeSpawnBundledDaemon() }
 
         if !statusFailed { self.status = statusValue }
         if !metricsFailed { self.metrics = metricsValue }

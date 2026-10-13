@@ -20,6 +20,7 @@ var role = "controller"
 var configPath = "./config/substation.toml"
 var dataDir = "./state"
 var authTokenFlag = ""
+var webuiOverride = ""
 var idx = 0
 while idx < argList.count {
     switch argList[idx] {
@@ -31,6 +32,8 @@ while idx < argList.count {
         if idx + 1 < argList.count { dataDir = argList[idx + 1]; idx += 1 }
     case "--auth-token":
         if idx + 1 < argList.count { authTokenFlag = argList[idx + 1]; idx += 1 }
+    case "--webui":
+        if idx + 1 < argList.count { webuiOverride = argList[idx + 1]; idx += 1 }
     default:
         break
     }
@@ -76,7 +79,8 @@ app.http.server.configuration.port = port
 
 if FileManager.default.fileExists(atPath: absolute(snapshot.webuiDist)) {
     app.middleware.use(NoCacheHTML())
-    app.middleware.use(FileMiddleware(publicDirectory: absolute(snapshot.webuiDist)))
+    let webuiDir = webuiOverride.isEmpty ? snapshot.webuiDist : webuiOverride
+    app.middleware.use(FileMiddleware(publicDirectory: absolute(webuiDir)))
 }
 
 if role == "node" {
@@ -93,7 +97,7 @@ if role == "node" {
     let kit = Kit(
         cfg: cfg, events: events, metrics: metrics, engines: engines, admission: admission,
         sessions: sessions, cache: cache, state: state, chat: chat, nodes: nodes, mem: mem,
-        system: system, dataDir: dataDir, deploy: deploy
+        system: system, dataDir: dataDir, deploy: deploy, webuiDir: (webuiOverride.isEmpty ? snapshot.webuiDist : webuiOverride)
     )
     try Routes.registerController(app, kit)
     DeployRoutes.register(app, kit, kit.deploy)
