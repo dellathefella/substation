@@ -155,6 +155,24 @@ public actor EngineActor {
 
         try await evictIfNeeded(forGB: model.sizeGB, cfg: cfg)
 
+        // Preflight resource estimate: warn (never block) if this may OOM/swap.
+        let memNow = await mem.read()
+        let resident = engines.values.reduce(0) { $0 + $1.sizeGB }
+        let est = ResourceEstimator.estimate(model: model, freeGB: memNow.freeGB,
+                                             totalGB: memNow.totalGB, residentGB: resident,
+                                             minFreeGB: cfg.minFreeRamGB)
+        if !est.warnings.isEmpty {
+            await events.publish("resource.warning", [
+                ("model", .string(model.name)),
+                ("node", .string(node)),
+                ("total_gb", .jDouble((est.totalGB * 100).rounded() / 100)),
+                ("free_gb", .jDouble((est.freeGB * 100).rounded() / 100)),
+                ("gpu_wired_limit_gb", .jDouble((est.gpuWiredLimitGB * 100).rounded() / 100)),
+                ("fits", .bool(est.fits)),
+                ("warnings", .array(est.warnings.map { JSONValue.string($0) })),
+            ])
+        }
+
         let t0 = Date()
         await events.publish("model.loading", [
             ("model", .string(model.name)),

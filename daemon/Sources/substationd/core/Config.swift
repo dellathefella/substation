@@ -8,6 +8,11 @@ public struct CatalogModel: Sendable, Hashable {
     public var ctx: Int
     public var placement: String
     public var flags: [String]
+    /// KV-cache estimate: MB per 1k context tokens per parallel slot.
+    /// 0 → estimator default (100 MB/1k/slot).
+    public var kvMBPer1k: Double
+    /// llama-server --parallel slots (KV replicated per slot).
+    public var slots: Int
 }
 
 public struct NodeStatic: Sendable, Hashable {
@@ -83,7 +88,9 @@ public struct ConfigSnapshot: Sendable {
                 sizeGB: m["size_gb"]?.doubleValue ?? 4,
                 ctx: m["ctx"]?.intValue ?? defaultCtx,
                 placement: m["placement"]?.stringValue ?? "local",
-                flags: m["flags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
+                flags: m["flags"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
+                kvMBPer1k: m["kv_mb_per_1k_ctx"]?.doubleValue ?? 0,
+                slots: m["parallel_slots"]?.intValue ?? 4
             )
         } ?? []
     }

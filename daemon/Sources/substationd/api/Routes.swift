@@ -116,6 +116,13 @@ public enum Routes {
             let tps = await kit.metrics.tokensPerSec()
             let state = await kit.state.state()
             let uptime = await kit.state.uptimeS()
+            let resident = engines.reduce(0.0) { $0 + $1.sizeGB }
+            let gpuLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: mem.totalGB)
+            let ramUsed = mem.totalGB - mem.freeGB
+            let pressure: String
+            if mem.freeGB < cfg.minFreeRamGB || ramUsed > gpuLimit { pressure = "critical" }
+            else if mem.freeGB < cfg.minFreeRamGB * 2 { pressure = "warn" }
+            else { pressure = "ok" }
             return jsonResponse(.object([
                 "state": .string(state),
                 "uptime_s": .jDouble((uptime * 10).rounded() / 10),
@@ -127,8 +134,12 @@ public enum Routes {
                 "models_total": .jInt(cfg.models.count),
                 "memory": .object([
                     "free_gb": .jDouble((mem.freeGB * 100).rounded() / 100),
+                    "used_gb": .jDouble((ramUsed * 100).rounded() / 100),
                     "total_gb": .jDouble((mem.totalGB * 100).rounded() / 100),
                     "min_free_gb": .jDouble(cfg.minFreeRamGB),
+                    "resident_gb": .jDouble((resident * 100).rounded() / 100),
+                    "gpu_wired_limit_gb": .jDouble((gpuLimit * 100).rounded() / 100),
+                    "pressure": .string(pressure),
                 ]),
                 "cluster_enabled": .bool(cfg.clusterEnabled),
                 "auto_available": .bool(Orchestrator.defaultModelName(cfg) != nil),
@@ -229,6 +240,52 @@ public enum Routes {
             let name = req.parameters.get("name") ?? ""
             await kit.engines.unload(model: name)
             return jsonResponse(.object(["unloaded": .bool(true), "model": .string(name)]))
+        }
+
+        // Preflight memory estimate for a catalog model (warn before load).
+        app.get("api", "models", ":name", "estimate") { req async throws -> Response in
+            try await auth(req, kit)
+            let name = req.parameters.get("name") ?? ""
+            let cfg = await kit.cfg.snapshot
+            guard let model = cfg.model(name) else { throw APIError.notFound("model \(name)") }
+            let mem = await kit.mem.read()
+            let resident = await kit.engines.list().reduce(0.0) { $0 + $1.sizeGB }
+            let est = ResourceEstimator.estimate(model: model, freeGB: mem.freeGB,
+                                                 totalGB: mem.totalGB, residentGB: resident,
+                                                 minFreeGB: cfg.minFreeRamGB)
+            return jsonResponse(est.json)
+        }
+
+        // Resource monitor: live memory pressure + per-model preflight estimates.
+        app.get("api", "resources") { req async throws -> Response in
+            try await auth(req, kit)
+            let cfg = await kit.cfg.snapshot
+            let mem = await kit.mem.read()
+            let live = await kit.engines.list()
+            let resident = live.reduce(0.0) { $0 + $1.sizeGB }
+            let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: mem.totalGB)
+            let used = mem.totalGB - mem.freeGB
+            let pressure: String
+            if mem.freeGB < cfg.minFreeRamGB || used > limit { pressure = "critical" }
+            else if mem.freeGB < cfg.minFreeRamGB * 2 { pressure = "warn" }
+            else { pressure = "ok" }
+            let estimates = cfg.models.map { m -> JSONValue in
+                ResourceEstimator.estimate(model: m, freeGB: mem.freeGB, totalGB: mem.totalGB,
+                                           residentGB: resident, minFreeGB: cfg.minFreeRamGB).json
+            }
+            return jsonResponse(.object([
+                "ram_total_gb": .jDouble((mem.totalGB * 100).rounded() / 100),
+                "ram_used_gb": .jDouble((used * 100).rounded() / 100),
+                "ram_free_gb": .jDouble((mem.freeGB * 100).rounded() / 100),
+                "resident_gb": .jDouble((resident * 100).rounded() / 100),
+                "gpu_wired_limit_gb": .jDouble((limit * 100).rounded() / 100),
+                "pressure": .string(pressure),
+                "min_free_gb": .jDouble(cfg.minFreeRamGB),
+                "engines": .array(live.map { .object([
+                    "model": .string($0.model), "node": .string($0.node), "size_gb": .jDouble($0.sizeGB),
+                ]) }),
+                "estimates": .array(estimates),
+            ]))
         }
 
         // MARK: Admin
