@@ -75,6 +75,9 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
   const [tiers, setTiers] = useState<Record<string, string>>({});
   const [defaultModel, setDefaultModel] = useState('');
   const [token, setToken] = useState('');
+  const [tab, setTab] = useState<'form' | 'json'>('form');
+  const [jsonText, setJsonText] = useState('');
+  const [jsonErr, setJsonErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -90,6 +93,8 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
       }
     }
     setDraft(next);
+    setJsonText(JSON.stringify(config ?? {}, null, 2));
+    setJsonErr(null);
     const t: Record<string, string> = {};
     for (const tier of TIERS) t[tier] = config?.orchestrator?.tiers?.[tier]?.models?.[0] ?? '';
     setTiers(t);
@@ -141,6 +146,34 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
       props.onClose();
     } else {
       pushToast('error', 'Config update failed', String(res.status || 'daemon unreachable'));
+    }
+  };
+
+  const saveJson = async (): Promise<void> => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      setJsonErr(String(e));
+      return;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      setJsonErr('Top level must be a JSON object');
+      return;
+    }
+    setSaving(true);
+    setJsonErr(null);
+    const res = await api.putConfig(parsed as unknown as ConfigPatch);
+    setSaving(false);
+    if (res.ok) {
+      patchConfigLocal(parsed as unknown as ConfigPatch);
+      const fresh = await api.getConfig();
+      replaceConfig(fresh);
+      pushToast('success', 'Config updated', 'full config tree pushed; changed keys merged + persisted');
+      props.onClose();
+    } else {
+      const body = res.body as { error?: { message?: string } } | null;
+      setJsonErr(body?.error?.message ?? `HTTP ${res.status}`);
     }
   };
 
@@ -204,11 +237,16 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
             ✕
           </button>
         </header>
-        <p className="drawer-note">
-          PUT <code>/api/config</code> partial patch · daemon applies live, persists to config TOML and broadcasts{' '}
-          <code>config.changed</code>.
-        </p>
-        <form className="drawer-form" onSubmit={(e) => void save(e)}>
+        <nav className="drawer-tabs" aria-label="Settings mode">
+          <button className={`nav-btn${tab === 'form' ? ' active' : ''}`} onClick={() => setTab('form')}>
+            Form
+          </button>
+          <button className={`nav-btn${tab === 'json' ? ' active' : ''}`} onClick={() => setTab('json')}>
+            JSON (all keys)
+          </button>
+        </nav>
+        {tab === 'form' ? (
+          <form className="drawer-form" onSubmit={(e) => void save(e)}>
           <div className="drawer-section">
             <div className="drawer-section-title">Tier models (auto routing)</div>
             {TIERS.map((t) => (
@@ -259,7 +297,28 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
           <button type="submit" className="btn btn-primary drawer-save" disabled={saving}>
             {saving ? 'Saving…' : 'Save & push to daemon'}
           </button>
-        </form>
+          </form>
+        ) : (
+          <div className="drawer-json">
+            <p className="drawer-note">
+              Full <code>/api/config</code> tree · every key editable (triage, ports, bin paths, model profiles:
+              node/ctx/placement/flags…). Values are deep-merged; to <em>remove</em> a key use Reset.
+            </p>
+            <textarea
+              className="json-editor"
+              spellCheck={false}
+              value={jsonText}
+              onChange={(e) => {
+                setJsonText(e.target.value);
+                setJsonErr(null);
+              }}
+            />
+            {jsonErr ? <div className="json-error">{jsonErr}</div> : null}
+            <button className="btn btn-primary drawer-save" onClick={() => void saveJson()} disabled={saving}>
+              {saving ? 'Pushing…' : 'Push full config to daemon'}
+            </button>
+          </div>
+        )}
         <div className="drawer-actions">
           <button className="btn" onClick={() => void act('tune')} disabled={busy !== null} title="POST /api/tune/apply">
             {busy === 'tune' ? 'Tuning…' : '🎛 Auto-tune & apply'}
