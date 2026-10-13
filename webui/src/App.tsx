@@ -56,9 +56,6 @@ export function App(): React.JSX.Element {
       ) : null}
       {view === 'dash' ? (
         <main className="grid">
-          <div className="row">
-            <NodeHealthStrip />
-          </div>
           <div className="row row-top">
             <ThroughputPanel />
             <TriagePanel />
@@ -84,7 +81,8 @@ export function App(): React.JSX.Element {
           <ConnectPanel />
         </main>
       ) : view === 'cluster' ? (
-        <main className="chat-view">
+        <main className="cluster-view">
+          <NodeHealthStrip />
           <ClusterWizard />
         </main>
       ) : view === 'cost' ? (
