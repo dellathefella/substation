@@ -31,6 +31,20 @@ export interface DaemonStatus {
   models_total: number;
   cache_hit_ratio?: number;
   nodes?: NodeHealth[];
+  requests_queued?: number;
+  cluster_enabled?: boolean;
+  auto_router?: string;
+  auto_available?: boolean;
+  orchestrator_up?: boolean;
+  memory?: {
+    free_gb: number;
+    used_gb: number;
+    total_gb: number;
+    min_free_gb?: number;
+    resident_gb?: number;
+    gpu_wired_limit_gb?: number;
+    pressure?: string;
+  };
 }
 
 export interface ModelMetrics {

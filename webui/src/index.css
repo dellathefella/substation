@@ -2030,3 +2030,60 @@ code {
   font-family: var(--mono);
   font-size: 10px;
 }
+
+/* ---------- dashboard node health strip ---------- */
+
+.health-strip {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.hc-card {
+  flex: 1 1 220px;
+  min-width: 210px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.hc-card.hc-dead {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.hc-card.hc-muted {
+  opacity: 0.75;
+}
+
+.hc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hc-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tx);
+  margin-right: auto;
+}
+
+.hc-foot {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--tx);
+}
+
+.hc-bad {
+  color: #fca5a5;
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { bootstrap } from './api.js';
 import { CachePanel } from './components/CachePanel.js';
 import { ChatPanel } from './components/ChatPanel.js';
+import { NodeHealthStrip } from './components/NodeHealthStrip.js';
 import { ClusterWizard } from './components/ClusterWizard.js';
 import { ConnectPanel } from './components/ConnectPanel.js';
 import { ClusterPanel } from './components/ClusterPanel.js';
@@ -53,6 +54,9 @@ export function App(): React.JSX.Element {
       ) : null}
       {view === 'dash' ? (
         <main className="grid">
+          <div className="row">
+            <NodeHealthStrip />
+          </div>
           <div className="row row-top">
             <ThroughputPanel />
             <TriagePanel />
