@@ -53,7 +53,10 @@ public actor EngineActor {
         sleepGuard.setActive(live.contains { $0.pid > 0 })
     }
 
-    public init(events: EventActor, metrics: MetricsActor, mem: Memory, nodes: NodesActor) {
+    public let logsDir: String
+
+    public init(events: EventActor, metrics: MetricsActor, mem: Memory, nodes: NodesActor, logsDir: String = "./state/logs") {
+        self.logsDir = logsDir
         self.events = events
         self.metrics = metrics
         self.mem = mem
@@ -62,7 +65,7 @@ public actor EngineActor {
 
     // MARK: - Spawning
 
-    private func spawnProcess(_ exec: String, args: [String]) -> Int32 {
+    private func spawnProcess(_ exec: String, args: [String], name: String) -> Int32 {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: (exec as NSString).isAbsolutePath ? exec : FileManager.default.currentDirectoryPath + "/" + exec)
         p.arguments = args
@@ -70,8 +73,15 @@ public actor EngineActor {
         let binDir = (p.executableURL?.deletingLastPathComponent().path ?? "")
         env["DYLD_LIBRARY_PATH"] = (env["DYLD_LIBRARY_PATH"].map { binDir + ":" + $0 }) ?? binDir
         p.environment = env
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
+        var outHandle: FileHandle?
+        if !name.isEmpty {
+            try? FileManager.default.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
+            let path = logsDir + "/" + name + ".log"
+            FileManager.default.createFile(atPath: path, contents: nil)
+            outHandle = FileHandle(forWritingAtPath: path)
+        }
+        p.standardOutput = outHandle ?? FileHandle.nullDevice
+        p.standardError = outHandle ?? FileHandle.nullDevice
         do {
             try p.run()
         } catch {
@@ -92,7 +102,7 @@ public actor EngineActor {
             "--port", String(cfg.triagePort),
             "-c", "2048",
             "--metrics",
-        ])
+        ], name: "triage-\(cfg.triagePort)")
         triagePid = pid
         usedPorts.insert(cfg.triagePort)
     }
@@ -119,7 +129,7 @@ public actor EngineActor {
     public func startRPCSelf(_ cfg: ConfigSnapshot) -> Bool {
         if rpcPid > 0 { return true }
         guard FileManager.default.isExecutableFile(atPath: cfg.rpcServer) else { return false }
-        rpcPid = spawnProcess(cfg.rpcServer, args: ["--host", "0.0.0.0", "--port", String(cfg.rpcPort)])
+        rpcPid = spawnProcess(cfg.rpcServer, args: ["--host", "0.0.0.0", "--port", String(cfg.rpcPort)], name: "rpc-\(cfg.rpcPort)")
         return rpcPid > 0
     }
 
@@ -217,7 +227,7 @@ public actor EngineActor {
                 args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", weights]
             }
             args += model.flags
-            let pid = spawnProcess(cfg.llamaServer, args: args)
+            let pid = spawnProcess(cfg.llamaServer, args: args, name: "llama-\(model.name)-\(port)")
             if pid == 0 { throw EngineError.notFound("cannot spawn \(cfg.llamaServer)") }
             engine = RunningEngine(
                 model: model.name, node: "local", host: "127.0.0.1", port: port,
@@ -293,7 +303,7 @@ public actor EngineActor {
             args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", tensorSplit.joined(separator: ",")]
         }
         args += model.flags
-        let pid = spawnProcess(cfg.llamaServer, args: args)
+        let pid = spawnProcess(cfg.llamaServer, args: args, name: "llama-\(model.name)-\(port)")
         if pid == 0 { throw EngineError.notFound("cannot spawn \(cfg.llamaServer)") }
         var engine = RunningEngine(
             model: model.name, node: "local", host: HostInfo.primaryIP(), port: port,

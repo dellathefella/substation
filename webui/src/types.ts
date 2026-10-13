@@ -21,6 +21,21 @@ export interface NodeHealth {
   ts: number;
 }
 
+export interface LogFile {
+  name: string;
+  bytes: number;
+  mtime_ms: number;
+}
+
+export interface SystemStats {
+  cpu_pct?: number;
+  gpu_pct?: number;
+  rx_bps?: number;
+  tx_bps?: number;
+  rx_total?: number;
+  tx_total?: number;
+}
+
 export interface NodeInfo {
   id: string;
   name: string;
@@ -35,6 +50,7 @@ export interface NodeInfo {
     gpu_pct?: number;
     rpc_up?: boolean;
     runners?: RunnerState[];
+    system?: SystemStats;
   } | null;
   link?: { kind?: string; rtt_ms?: number; mbps?: number; rdma?: boolean } | null;
 }
@@ -50,6 +66,7 @@ export interface DaemonStatus {
   cache_hit_ratio?: number;
   nodes?: NodeHealth[];
   requests_queued?: number;
+  system?: SystemStats;
   cluster_enabled?: boolean;
   auto_router?: string;
   auto_available?: boolean;

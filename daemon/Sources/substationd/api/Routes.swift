@@ -6,6 +6,47 @@ import NIOCore
 import NIOHTTP1
 
 /// Everything the controller needs, actor-backed and Sendable-safe.
+enum LogFiles {
+    static func safeLogName(_ name: String) -> String? {
+        let n = name.replacingOccurrences(of: "/", with: "")
+        guard n.hasSuffix(".log"), !n.contains(".."), !n.isEmpty else { return nil }
+        return n
+    }
+
+    static func listLogs(_ dir: String) -> [JSONValue] {
+        let fm = FileManager.default
+        let files = (try? fm.contentsOfDirectory(atPath: dir))?.filter { $0.hasSuffix(".log") }.sorted() ?? []
+        return files.map { f in
+            let attrs = try? fm.attributesOfItem(atPath: dir + "/" + f)
+            return .object([
+                "name": .string(f),
+                "bytes": .jDouble(Double(attrs?[.size] as? Int ?? 0)),
+                "mtime_ms": .jDouble(Double((attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) * 1000),
+            ])
+        }
+    }
+
+    static func sendLog(_ req: Request, logsDir: String, name raw: String?, tail rawTail: Int?) throws -> Response {
+        guard let raw = raw, let name = safeLogName(raw) else {
+            throw APIError.badRequest("invalid log name")
+        }
+        let tail = rawTail ?? 300
+        let path = logsDir + "/" + name
+        guard let data = FileManager.default.contents(atPath: path) else {
+            throw APIError.notFound("no log \(name)")
+        }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let kept = lines.suffix(max(1, min(tail, 5000)))
+        return jsonResponse(.object([
+            "name": .string(name),
+            "lines": .jInt(lines.count),
+            "tail": .jInt(kept.count),
+            "text": .array(kept.map { .string(String($0)) }),
+        ]))
+    }
+}
+
 public struct Kit: Sendable {
     public let cfg: ConfigStore
     public let events: EventActor
@@ -19,14 +60,18 @@ public struct Kit: Sendable {
     public let nodes: NodesActor
     public let mem: Memory
     public let pipeline: ChatPipeline
+    public let system: System
+    public let dataDir: String
     public let client = EngineClient()
     public let usage = TokenUsage()
 
     public init(
         cfg: ConfigStore, events: EventActor, metrics: MetricsActor, engines: EngineActor,
         admission: Admission, sessions: SessionActor, cache: ResponseCache, state: DaemonState,
-        chat: ChatActor, nodes: NodesActor, mem: Memory
+        chat: ChatActor, nodes: NodesActor, mem: Memory, system: System, dataDir: String
     ) {
+        self.system = system
+        self.dataDir = dataDir
         self.cfg = cfg
         self.events = events
         self.metrics = metrics
@@ -172,6 +217,7 @@ public enum Routes {
                 "gpu_wired_limit_gb": .jDouble((gpuLimit * 100).rounded() / 100),
                 "pressure": .string(pressure),
             ])
+            obj["system"] = await kit.system.json()
             obj["cluster_enabled"] = .bool(cfg.clusterEnabled)
             obj["auto_router"] = .string(cfg.orchestratorEnabled ? "enabled" : "disabled")
             obj["auto_available"] = .bool(!cfg.orchestratorEnabled || Orchestrator.defaultModelName(cfg) != nil)
@@ -613,6 +659,38 @@ public enum Routes {
         registerConnectors(app, kit)
 
         // MARK: WebSocket
+
+
+        // MARK: Engine logs (llama.cpp / ggml-rpc diagnostics)
+
+        app.get("api", "logs") { req async throws -> Response in
+            try await auth(req, kit)
+            return jsonResponse(.object(["logs": .array(LogFiles.listLogs(kit.engines.logsDir))]))
+        }
+
+        app.get("api", "logs", ":name") { req async throws -> Response in
+            try await auth(req, kit)
+            return try LogFiles.sendLog(req, logsDir: kit.engines.logsDir,
+                                 name: req.parameters.get("name") ?? "", tail: req.query[Int.self, at: "tail"])
+        }
+
+        app.get("api", "cluster", "logs") { req async throws -> Response in
+            try await auth(req, kit)
+            guard let nodeId = req.query[String.self, at: "node"],
+                  let name = req.query[String.self, at: "name"],
+                  let n = await kit.nodes.node(nodeId) else {
+                return jsonResponse(.object(["error": .object(["message": .string("node/name required"), "code": .string("bad_request")])]), status: .badRequest)
+            }
+            let tail = req.query[Int.self, at: "tail"] ?? 300
+            let cfg = await kit.cfg.snapshot
+            let url = "http://\(n.ip):\(n.agentPort)/api/node/logs?name=\(name)&tail=\(tail)"
+            guard let (status, val) = try? await kit.client.json(method: "GET", url: url, bearer: cfg.authToken, timeout: 10), status < 400 else {
+                return jsonResponse(.object(["error": .object(["message": .string("node \(nodeId) unreachable"), "code": .string("peer_failed")])]), status: .badGateway)
+            }
+            var obj = val?.objectValue ?? [:]
+            obj["node"] = .string(nodeId)
+            return jsonResponse(.object(obj))
+        }
 
         app.webSocket("ws") { req, ws in
             Task {

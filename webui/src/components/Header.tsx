@@ -20,7 +20,7 @@ function stateTone(state: string | undefined): 'ok' | 'warn' | 'err' | 'info' | 
   }
 }
 
-export type View = 'dash' | 'chat' | 'connect' | 'cluster';
+export type View = 'dash' | 'chat' | 'connect' | 'cluster' | 'logs';
 
 export function Header(props: { onOpenSettings: () => void; view: View; onView: (v: View) => void }): ReactNode {
   const status = useStore((s) => s.status);
@@ -111,6 +111,9 @@ export function Header(props: { onOpenSettings: () => void; view: View; onView: 
           </button>
           <button className={`nav-btn${props.view === 'cluster' ? ' active' : ''}`} onClick={() => props.onView('cluster')}>
             Cluster
+          </button>
+          <button className={`nav-btn${props.view === 'logs' ? ' active' : ''}`} onClick={() => props.onView('logs')}>
+            Logs
           </button>
         </nav>
         {paused ? (

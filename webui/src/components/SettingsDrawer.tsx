@@ -79,7 +79,7 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
   const [tierRows, setTierRows] = useState<{ name: string; priority: string; desc: string; models: string[] }[]>([]);
   const [defaultModel, setDefaultModel] = useState('');
   const [token, setToken] = useState('');
-  const [tab, setTab] = useState<'form' | 'json' | 'profiles'>('form');
+  const [tab, setTab] = useState<'form' | 'tiers' | 'profiles' | 'json'>('form');
   const [profiles, setProfiles] = useState<NonNullable<RuntimeConfig['models']>>([]);
   const [jsonText, setJsonText] = useState('');
   const [jsonErr, setJsonErr] = useState<string | null>(null);
@@ -520,53 +520,8 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     }
   };
 
-  const field = (f: Field): React.JSX.Element => {
-    const raw = draft[f.path];
-    return (
-      <label key={f.path} className="field">
-        <span className="field-label">
-          {f.label}
-          {f.hint ? <span className="field-hint">{f.hint}</span> : null}
-        </span>
-        {f.type === 'bool' ? (
-          <input type="checkbox" checked={raw === true} onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.checked }))} />
-        ) : f.type === 'text' ? (
-          <input type="text" value={typeof raw === 'string' ? raw : ''} onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))} />
-        ) : (
-          <input
-            type="number"
-            step={f.step ?? 1}
-            min={f.min}
-            value={typeof raw === 'string' ? raw : ''}
-            onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))}
-          />
-        )}
-      </label>
-    );
-  };
-
-  return (
-    <div className="drawer-scrim" onClick={props.onClose} role="presentation">
-      <aside className="drawer drawer-wide" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
-        <header className="drawer-head">
-          <h2>Settings</h2>
-          <button className="banner-x" onClick={props.onClose} aria-label="Close settings">
-            ✕
-          </button>
-        </header>
-        <nav className="drawer-tabs" aria-label="Settings mode">
-          <button className={`nav-btn${tab === 'form' ? ' active' : ''}`} onClick={() => setTab('form')}>
-            Form
-          </button>
-          <button className={`nav-btn${tab === 'profiles' ? ' active' : ''}`} onClick={() => setTab('profiles')}>
-            Profiles
-          </button>
-          <button className={`nav-btn${tab === 'json' ? ' active' : ''}`} onClick={() => setTab('json')}>
-            JSON (all keys)
-          </button>
-        </nav>
-        {tab === 'form' ? (
-          <form className="drawer-form" onSubmit={(e) => void save(e)}>
+  const tiersTab = (
+    <div className="tiers">
           <div className="drawer-section">
             <div className="drawer-section-title">Tiers (auto routing)</div>
             <div className="prof-note">
@@ -632,6 +587,58 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
               <input type="text" placeholder="(smallest catalog model)" value={defaultModel} onChange={(e) => setDefaultModel(e.target.value)} />
             </label>
           </div>
+    </div>
+  );
+  const field = (f: Field): React.JSX.Element => {
+    const raw = draft[f.path];
+    return (
+      <label key={f.path} className="field">
+        <span className="field-label">
+          {f.label}
+          {f.hint ? <span className="field-hint">{f.hint}</span> : null}
+        </span>
+        {f.type === 'bool' ? (
+          <input type="checkbox" checked={raw === true} onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.checked }))} />
+        ) : f.type === 'text' ? (
+          <input type="text" value={typeof raw === 'string' ? raw : ''} onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))} />
+        ) : (
+          <input
+            type="number"
+            step={f.step ?? 1}
+            min={f.min}
+            value={typeof raw === 'string' ? raw : ''}
+            onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))}
+          />
+        )}
+      </label>
+    );
+  };
+
+  return (
+    <div className="drawer-scrim" onClick={props.onClose} role="presentation">
+      <aside className="drawer drawer-wide" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
+        <header className="drawer-head">
+          <h2>Settings</h2>
+          <button className="banner-x" onClick={props.onClose} aria-label="Close settings">
+            ✕
+          </button>
+        </header>
+        <nav className="drawer-tabs" aria-label="Settings mode">
+          <button className={`nav-btn${tab === 'form' ? ' active' : ''}`} onClick={() => setTab('form')}>
+            Form
+          </button>
+          <button className={`nav-btn${tab === 'tiers' ? ' active' : ''}`} onClick={() => setTab('tiers')}>
+            Tiers
+          </button>
+          <button className={`nav-btn${tab === 'profiles' ? ' active' : ''}`} onClick={() => setTab('profiles')}>
+            Profiles
+          </button>
+          <button className={`nav-btn${tab === 'json' ? ' active' : ''}`} onClick={() => setTab('json')}>
+            JSON (all keys)
+          </button>
+        </nav>
+        {tab === 'form' ? (
+          <form className="drawer-form" onSubmit={(e) => void save(e)}>
           {SECTIONS.map((s) => (
             <div key={s.title} className="drawer-section">
               <div className="drawer-section-title">{s.title}</div>
@@ -693,6 +700,7 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
           </button>
           </form>
         ) : null}
+        {tab === 'tiers' ? tiersTab : null}
         {tab === 'profiles' ? profilesTab : null}
         {tab === 'json' ? (
           <div className="drawer-json">

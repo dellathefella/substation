@@ -13,7 +13,10 @@ public struct NodeKit: Sendable {
     public let nodeName: String
     public let joinCodeFile: String
 
-    public init(cfg: ConfigStore, events: EventActor, engines: EngineActor, mem: Memory, dataDir: String) {
+    public let system: System
+
+    public init(cfg: ConfigStore, events: EventActor, engines: EngineActor, mem: Memory, dataDir: String, system: System) {
+        self.system = system
         self.cfg = cfg
         self.events = events
         self.engines = engines
@@ -75,6 +78,7 @@ extension NodeKit {
             "gpu_pct": .jDouble(0),
             "runners": .array(runners),
             "rpc_up": .bool(rpcUp),
+            "system": await system.json(),
         ])
     }
 }
@@ -145,6 +149,12 @@ public enum NodeRoutes {
             try await NodeKit.auth(req, kit)
             await kit.engines.stopRPCSelf()
             return jsonResponse(.object(["rpc_up": .bool(false)]))
+        }
+
+        app.get("api", "node", "logs") { req async throws -> Response in
+            try await NodeKit.auth(req, kit)
+            return try LogFiles.sendLog(req, logsDir: kit.engines.logsDir,
+                                        name: req.parameters.get("name") ?? "", tail: req.query[Int.self, at: "tail"])
         }
 
         // Node's own join-code endpoint (spec §6). Generates a code when none set.

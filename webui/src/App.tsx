@@ -4,6 +4,7 @@ import { CachePanel } from './components/CachePanel.js';
 import { ChatPanel } from './components/ChatPanel.js';
 import { NodeHealthStrip } from './components/NodeHealthStrip.js';
 import { ClusterWizard } from './components/ClusterWizard.js';
+import { LogsPanel } from './components/LogsPanel.js';
 import { ConnectPanel } from './components/ConnectPanel.js';
 import { ClusterPanel } from './components/ClusterPanel.js';
 import { Header } from './components/Header.js';
@@ -81,9 +82,13 @@ export function App(): React.JSX.Element {
         <main className="chat-view">
           <ConnectPanel />
         </main>
-      ) : (
+      ) : view === 'cluster' ? (
         <main className="chat-view">
           <ClusterWizard />
+        </main>
+      ) : (
+        <main className="chat-view">
+          <LogsPanel />
         </main>
       )}
       <footer className="footer">

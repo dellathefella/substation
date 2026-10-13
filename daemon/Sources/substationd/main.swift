@@ -56,7 +56,8 @@ let cache = ResponseCache()
 let state = DaemonState()
 let chat = ChatActor(dataDir: dataDir)
 let nodes = NodesActor(dataDir: dataDir + "/cluster")
-let engines = EngineActor(events: events, metrics: metrics, mem: mem, nodes: nodes)
+let system = System()
+let engines = EngineActor(events: events, metrics: metrics, mem: mem, nodes: nodes, logsDir: dataDir + "/logs")
 
 let snapshot = await cfg.snapshot
 await events.configure(ringSize: snapshot.eventRingSize)
@@ -79,7 +80,7 @@ if FileManager.default.fileExists(atPath: absolute(snapshot.webuiDist)) {
 }
 
 if role == "node" {
-    let nodeKit = NodeKit(cfg: cfg, events: events, engines: engines, mem: mem, dataDir: dataDir)
+    let nodeKit = NodeKit(cfg: cfg, events: events, engines: engines, mem: mem, dataDir: dataDir, system: system)
     try NodeRoutes.register(app, nodeKit)
     await engines.startLoops(cfg: snapshot, cfgStore: cfg)
     if snapshot.clusterEnabled {
@@ -90,7 +91,8 @@ if role == "node" {
 } else {
     let kit = Kit(
         cfg: cfg, events: events, metrics: metrics, engines: engines, admission: admission,
-        sessions: sessions, cache: cache, state: state, chat: chat, nodes: nodes, mem: mem
+        sessions: sessions, cache: cache, state: state, chat: chat, nodes: nodes, mem: mem,
+        system: system, dataDir: dataDir
     )
     try Routes.registerController(app, kit)
 

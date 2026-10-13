@@ -154,6 +154,21 @@ export interface AdminResult {
   body: unknown;
 }
 
+async function get(path: string): Promise<AdminResult> {
+  try {
+    const res = await fetch(`${apiBase()}${path}`, { headers: authHeaders() });
+    let parsed: unknown = null;
+    try {
+      parsed = await res.json();
+    } catch {
+      parsed = null;
+    }
+    return { ok: res.ok, status: res.status, body: parsed };
+  } catch (e) {
+    return { ok: false, status: 0, body: { error: { message: String(e) } } };
+  }
+}
+
 async function post(path: string, body?: unknown): Promise<AdminResult> {
   try {
     const res = await fetch(`${apiBase()}${path}`, {
@@ -209,4 +224,9 @@ export const api = {
   rpcPeer: (nodeId: string, start: boolean): Promise<AdminResult> => post('/api/cluster/rpc-peer', { node_id: nodeId, start: start }),
   erase: (path: string): Promise<AdminResult> => post('/api/admin/erase', { path }),
   nodes: (): Promise<NodeInfo[]> => getArray<NodeInfo>('/api/nodes'),
+  logs: (): Promise<AdminResult> => get('/api/logs'),
+  logFile: (name: string, tail: number): Promise<AdminResult> =>
+    get(`/api/logs/${encodeURIComponent(name)}?tail=${tail}`),
+  nodeLogs: (node: string, name: string, tail: number): Promise<AdminResult> =>
+    get(`/api/cluster/logs?node=${encodeURIComponent(node)}&name=${encodeURIComponent(name)}&tail=${tail}`),
 };

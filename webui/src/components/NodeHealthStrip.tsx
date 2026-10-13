@@ -14,6 +14,10 @@ function agoShort(sec: number): string {
 
 interface Card {
   name: string;
+  cpu?: number;
+  gpu?: number;
+  rx?: number;
+  tx?: number;
   ramUsed: number;
   ramTotal: number;
   rpcUp?: boolean;
@@ -33,6 +37,10 @@ function mapNodes(list: NodeInfo[]): Card[] {
     ts: undefined,
     link: n.link ?? null,
     runners: n.health?.runners?.length ?? 0,
+    cpu: n.health?.system?.cpu_pct,
+    gpu: n.health?.system?.gpu_pct,
+    rx: n.health?.system?.rx_bps,
+    tx: n.health?.system?.tx_bps,
   }));
 }
 
@@ -77,6 +85,7 @@ export function NodeHealthStrip(): React.JSX.Element | null {
             rpcUp: n.rpc_up,
             healthy: true,
             ts: n.ts,
+            cpu: undefined, gpu: undefined, rx: undefined, tx: undefined,
             link: discovery.find((p) => p.node_id === n.node || p.name === n.node)?.link ?? null,
             runners: n.runners.length,
           }));
@@ -104,6 +113,12 @@ export function NodeHealthStrip(): React.JSX.Element | null {
               {mem.resident_gb ? <span className="dim">models {mem.resident_gb.toFixed(1)}</span> : null}
               {mem.gpu_wired_limit_gb ? <span className="dim">gpu cap {mem.gpu_wired_limit_gb.toFixed(0)}</span> : null}
             </div>
+            <div className="hc-foot">
+              {st.system?.cpu_pct !== undefined ? <span className="dim">cpu {st.system.cpu_pct.toFixed(0)}%</span> : null}
+              {st.system?.gpu_pct !== undefined ? <span className="dim">gpu {st.system.gpu_pct.toFixed(0)}%</span> : null}
+              {st.system?.rx_bps !== undefined ? <span className="dim">↓ {(st.system.rx_bps / 1_048_576).toFixed(1)} MB/s</span> : null}
+              {st.system?.tx_bps !== undefined ? <span className="dim">↑ {(st.system.tx_bps / 1_048_576).toFixed(1)} MB/s</span> : null}
+            </div>
           </>
         ) : null}
       </div>
@@ -130,6 +145,12 @@ export function NodeHealthStrip(): React.JSX.Element | null {
               <span className="dim">{n.link?.kind ?? 'no link'}</span>
               {n.link?.mbps ? <span className="dim">{(n.link.mbps / 1000).toFixed(1)} Gbps</span> : null}
               {n.runners > 0 ? <span className="dim">{n.runners} runner{n.runners > 1 ? 's' : ''}</span> : <span className="dim">idle</span>}
+            </div>
+            <div className="hc-foot">
+              {n.cpu !== undefined ? <span className="dim">cpu {n.cpu.toFixed(0)}%</span> : null}
+              {n.gpu !== undefined ? <span className="dim">gpu {n.gpu.toFixed(0)}%</span> : null}
+              {n.rx !== undefined ? <span className="dim">↓ {(n.rx / 1_048_576).toFixed(1)} MB/s</span> : null}
+              {n.tx !== undefined ? <span className="dim">↑ {(n.tx / 1_048_576).toFixed(1)} MB/s</span> : null}
             </div>
           </div>
         );
