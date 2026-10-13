@@ -46,6 +46,24 @@ public struct Kit: Sendable {
     }
 }
 
+/// HTML must never be cached: assets are content-hashed, but a stale
+/// index.html pins the browser to an old bundle (old hashed JS 404s after
+/// each rebuild). Hashed assets may cache; HTML always revalidates.
+public struct NoCacheHTML: Middleware {
+    public init() {}
+    public func respond(to request: Request, chainingTo next: any Responder) -> EventLoopFuture<Response> {
+        next.respond(to: request).map { res in
+            let path = request.url.path
+            if path == "/" || path.hasSuffix(".html") || !path.contains(".") {
+                res.headers.replaceOrAdd(name: .cacheControl, value: "no-cache, must-revalidate")
+            } else if path.hasPrefix("/assets/") {
+                res.headers.replaceOrAdd(name: .cacheControl, value: "public, max-age=31536000, immutable")
+            }
+            return res
+        }
+    }
+}
+
 public enum Routes {
     public static let version = "0.1.0"
 

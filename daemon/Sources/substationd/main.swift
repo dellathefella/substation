@@ -74,6 +74,7 @@ app.http.server.configuration.hostname = bindOverride ?? snapshot.bind
 app.http.server.configuration.port = port
 
 if FileManager.default.fileExists(atPath: absolute(snapshot.webuiDist)) {
+    app.middleware.use(NoCacheHTML())
     app.middleware.use(FileMiddleware(publicDirectory: absolute(snapshot.webuiDist)))
 }
 
