@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "substation": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Substation",
+      "options": {
+        "baseURL": "http://127.0.0.1:8800/v1",
+        "apiKey": "not-required"
+      },
+      "models": {
+        "auto": { "name": "Substation auto" },
+        "auto-fast": { "name": "Substation fast" },
+        "auto-smart": { "name": "Substation smart" }
+      }
+    }
+  }
+}
