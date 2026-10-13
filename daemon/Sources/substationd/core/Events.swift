@@ -77,14 +77,25 @@ public actor EventActor {
     public func subscribe(_ ws: WebSocket) -> UUID {
         let id = UUID()
         subs[id] = ws
+        pongs[id] = Date().timeIntervalSince1970
         return id
     }
 
     public func unsubscribe(_ id: UUID) {
+        pongs[id] = nil
         subs.removeValue(forKey: id)
     }
 
     public func subscriberCount() -> Int { subs.count }
+
+    /// App-level liveness: clients answer {"type":"ping"} with
+    /// {"type":"pong"}; the sweep loop closes sockets whose last pong is
+    /// older than the threshold (black-holed wifi TCP would never error).
+    public func pong(from id: UUID) { pongs[id] = Date().timeIntervalSince1970 }
+
+    public func lastPong(_ id: UUID) -> Double? { pongs[id] }
+
+    private var pongs: [UUID: Double] = [:]
 
     /// Newest first.
     public func recent(limit: Int) -> [Event] {

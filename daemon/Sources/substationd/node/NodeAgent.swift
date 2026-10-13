@@ -139,6 +139,13 @@ public enum NodeRoutes {
             return jsonResponse(.object(["killed": .bool(true), "model": .string(model)]))
         }
 
+        app.on(.POST, "api", "admin", "restart", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await NodeKit.auth(req, kit)
+            try? await kit.events.publish("daemon.restarting", .object(["scope": .string("node-self")]))
+            DaemonRestart.scheduleSelfRestart()
+            return jsonResponse(.object(["restarting": .bool(true)]))
+        }
+
         app.on(.POST, "api", "node", "rpc", "start", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await NodeKit.auth(req, kit)
             let ok = await kit.engines.startRPCSelf(await kit.cfg.snapshot)

@@ -217,6 +217,8 @@ export const api = {
   putConfig: (patch: ConfigPatch): Promise<AdminResult> => put('/api/config', patch),
   getConfig: (): Promise<RuntimeConfig | null> => getConfig(),
   rotateKey: (): Promise<AdminResult> => post('/api/admin/rotate-key'),
+  restartDaemon: (): Promise<AdminResult> => post('/api/admin/restart'),
+  restartDaemons: (): Promise<AdminResult> => post('/api/cluster/restart-daemons'),
   resetConfig: (): Promise<AdminResult> => post('/api/admin/reset-config'),
   tuneApply: (): Promise<AdminResult> => post('/api/tune/apply'),
   unjoin: (node: string): Promise<AdminResult> => post(`/api/cluster/unjoin?node=${encodeURIComponent(node)}`),

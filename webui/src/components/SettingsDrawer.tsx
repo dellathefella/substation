@@ -433,11 +433,19 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     }
   };
 
-  const act = async (kind: 'tune' | 'rotate' | 'reset'): Promise<void> => {
+  const act = async (kind: 'tune' | 'rotate' | 'reset' | 'restart'): Promise<void> => {
     if (kind === 'reset' && !window.confirm('Reset config to factory defaults? This disables auth and restores the template model catalog.')) return;
+    if (kind === 'restart' && !window.confirm('Restart the daemon on this Mac AND every joined node? In-flight requests will fail for a few seconds.')) return;
     setBusy(kind);
-    const res = kind === 'tune' ? await api.tuneApply() : kind === 'rotate' ? await api.rotateKey() : await api.resetConfig();
+    const res = kind === 'tune' ? await api.tuneApply()
+      : kind === 'rotate' ? await api.rotateKey()
+      : kind === 'restart' ? await api.restartDaemons()
+      : await api.resetConfig();
     setBusy(null);
+    if (kind === 'restart' && res.ok) {
+      pushToast('success', 'Daemons restarting', 'all nodes re-executing; dashboard will blink offline');
+      return;
+    }
     if (!res.ok) {
       const body = res.body as { error?: { message?: string } } | null;
       pushToast('error', kind === 'tune' ? 'Auto-tune failed' : kind === 'rotate' ? 'Key rotation failed' : 'Reset failed', body?.error?.message ?? String(res.status || 'daemon unreachable'));
@@ -729,6 +737,9 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
           </button>
           <button className="btn" onClick={() => void act('rotate')} disabled={busy !== null} title="POST /api/admin/rotate-key">
             {busy === 'rotate' ? 'Rotating…' : '🔑 Rotate cluster key'}
+          </button>
+          <button className="btn" onClick={() => void act('restart')} disabled={busy !== null} title="POST /api/cluster/restart-daemons — re-execs every substationd">
+            {busy === 'restart' ? 'Restarting…' : '🔁 Restart daemons (all)'}
           </button>
           <button className="btn btn-danger" onClick={() => void act('reset')} disabled={busy !== null} title="POST /api/admin/reset-config">
             {busy === 'reset' ? 'Resetting…' : '♻ Reset config to defaults'}

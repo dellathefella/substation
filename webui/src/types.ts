@@ -158,6 +158,7 @@ export interface ClusterWarning {
   code: string;
   msg: string;
   ts: number;
+  repeated?: number;
 }
 
 export interface RuntimeConfig {

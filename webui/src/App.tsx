@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react';
 import { bootstrap } from './api.js';
 import { CachePanel } from './components/CachePanel.js';
 import { ChatPanel } from './components/ChatPanel.js';
-import { NodeHealthStrip } from './components/NodeHealthStrip.js';
+import { ClusterStatus } from './components/ClusterStatus.js';
 import { ClusterWizard } from './components/ClusterWizard.js';
 import { LogsPanel } from './components/LogsPanel.js';
 import { CostPanel } from './components/CostPanel.js';
 import { ConnectPanel } from './components/ConnectPanel.js';
-import { ClusterPanel } from './components/ClusterPanel.js';
 import { Header } from './components/Header.js';
 import type { View } from './components/Header.js';
 import { LatencyPanel } from './components/LatencyPanel.js';
@@ -68,9 +67,6 @@ export function App(): React.JSX.Element {
             <RoutingFeed />
             <ModelsPanel />
           </div>
-          <div className="row">
-            <ClusterPanel />
-          </div>
         </main>
       ) : view === 'chat' ? (
         <main className="chat-view">
@@ -82,7 +78,7 @@ export function App(): React.JSX.Element {
         </main>
       ) : view === 'cluster' ? (
         <main className="cluster-view">
-          <NodeHealthStrip />
+          <ClusterStatus />
           <ClusterWizard />
         </main>
       ) : view === 'cost' ? (

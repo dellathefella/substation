@@ -120,7 +120,7 @@ try await app.asyncShutdown()
 
 struct NodeHealthSig: Equatable {
     var healthy: Bool
-    var ramBucket: Int      // 0.5 GB buckets — noise below this never re-emits
+    var ramBucket: Int      // 4 GB buckets — wifi-noise RAM jitter never re-emits
     var rpcUp: Bool
     var runners: Int
 }
@@ -145,7 +145,7 @@ func startHeartbeat(_ kit: Kit) {
                     let ram = val?["ram_used_gb"]?.doubleValue ?? 0
                     sig = NodeHealthSig(
                         healthy: true,
-                        ramBucket: Int(ram * 2),
+                        ramBucket: Int(ram / 4),
                         rpcUp: val?["rpc_up"]?.boolValue ?? false,
                         runners: val?["runners"]?.arrayValue?.count ?? 0
                     )
@@ -221,9 +221,9 @@ func startHealLoop(_ kit: Kit) {
                         probeMB: cfg.probeBytesMB, cfg: cfg, events: kit.events, client: kit.client
                     )
                     await kit.nodes.setLink(id: node.id, link: link)
-                    await kit.events.publish("cluster.healed", .object([
+                    await kit.events.publishDeduped("cluster.healed", key: "cluster.healed:\(node.id)", .object([
                         "node": .string(node.id), "link": link,
-                    ]))
+                    ]), cooldown: 60)
                 } else if !healthy {
                     down[node.id] = true
                     await kit.events.publishDeduped("cluster.warning", key: "cluster.warning:\(node.id)", .object([

@@ -67,6 +67,14 @@ function connect(): void {
     if (raw.length === 0) return;
     try {
       const parsed: unknown = JSON.parse(raw);
+      if ((parsed as { type?: unknown }).type === 'ping') {
+        try {
+          ws.send('{"type":"pong"}');
+        } catch {
+          /* socket gone */
+        }
+        return;
+      }
       if (isWsFrame(parsed)) {
         pending.push(parsed);
         scheduleFlush();

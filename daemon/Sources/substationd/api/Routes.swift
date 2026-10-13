@@ -565,6 +565,21 @@ public enum Routes {
         }
 
         // Controller-side RPC worker control: self, or proxied to one joined node.
+        app.on(.POST, "api", "admin", "restart", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            try? await kit.events.publish("daemon.restarting", .object(["scope": .string("self")]))
+            DaemonRestart.scheduleSelfRestart()
+            return jsonResponse(.object(["restarting": .bool(true)]))
+        }
+
+        app.on(.POST, "api", "cluster", "restart-daemons", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let cfg = await kit.cfg.snapshot
+            let nodes = await kit.nodes.allNodes()
+            Task { await DaemonRestart.restartFleet(nodes: nodes, client: kit.client, token: cfg.authToken, kitEvents: kit.events) }
+            return jsonResponse(.object(["restarting": .bool(true), "peers": .jInt(nodes.count)]))
+        }
+
         app.on(.POST, "api", "cluster", "rpc-self", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await auth(req, kit)
             let body = (try? await Routes.jsonBody(req)) ?? .object([:])
@@ -730,14 +745,42 @@ public enum Routes {
         }
 
         app.webSocket("ws") { req, ws in
-            Task {
-                let id = await kit.events.subscribe(ws)
-                await kit.events.publish("ws.hello", .object([
-                    "version": .string(version),
-                    "subscribers": .jInt(await kit.events.subscriberCount()),
-                ]))
+            let loop = ws.eventLoop
+            let id = await kit.events.subscribe(ws)
+            // Hello goes to THIS socket only — not the global event feed.
+            let hello = Event("ws.hello", .object([
+                "version": .string(version),
+                "subscribers": .jInt(await kit.events.subscriberCount()),
+            ]))
+            if let data = try? JSONEncoder().encode(hello), let val = JSONCoding.decode(data) {
+                let str = JSONCoding.encodeString(val)
+                try? await loop.submit { try ws.send(str) }.get()
+            }
+            // Liveness: protocol ping every 20 s (browsers auto-pong via
+            // onPong); no pong for 45 s (wifi black-hole) → force close.
+            try? await loop.submit {
+                try ws.onPong { _, _ in
+                    Task { await kit.events.pong(from: id) }
+                }
                 ws.onClose.whenComplete { _ in
                     Task { await kit.events.unsubscribe(id) }
+                }
+            }.get()
+            Task.detached(priority: .background) {
+                while true {
+                    let closed = try? await loop.submit { ws.isClosed }.get()
+                    if closed == true { break }
+                    do {
+                        try await loop.submit { try ws.sendPing() }.get()
+                    } catch {
+                        break
+                    }
+                    let last = await kit.events.lastPong(id) ?? Date().timeIntervalSince1970
+                    if Date().timeIntervalSince1970 - last > 45 {
+                        try? await loop.flatSubmit { ws.close() }.get()
+                        break
+                    }
+                    try? await Task.sleep(for: .seconds(20))
                 }
             }
         }

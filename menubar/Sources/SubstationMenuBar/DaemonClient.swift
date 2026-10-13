@@ -106,6 +106,9 @@ struct DaemonClient: Sendable {
     @discardableResult
     func restartAllEngines() async -> Bool { await post("/api/engines/restart-all") }
 
+    @discardableResult
+    func restartDaemons() async -> Bool { await post("/api/cluster/restart-daemons") }
+
     private func post(_ path: String) async -> Bool {
         await fetchData(path, method: "POST") != nil
     }

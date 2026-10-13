@@ -144,6 +144,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         add("Resume Routing", #selector(resumeRouting))
         add("Reload Config", #selector(reloadConfig))
         add("Restart Engines", #selector(restartEngines))
+        add("Restart Daemons (all Macs)", #selector(restartDaemons))
         menu.addItem(.separator())
         let login = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         login.target = self
@@ -171,6 +172,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     @objc private func restartEngines() {
         model.restartAllEngines()
+    }
+
+    @objc private func restartDaemons() {
+        model.restartDaemons()
     }
 
     @objc private func resumeRouting() {

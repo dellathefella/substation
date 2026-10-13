@@ -2419,3 +2419,38 @@ code {
   overflow: auto;
   padding-top: 2px;
 }
+
+/* ---------- cluster status resource bars ---------- */
+
+.rbars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rbar {
+  display: grid;
+  grid-template-columns: 34px 1fr 40px;
+  align-items: center;
+  gap: 7px;
+}
+
+.rbar-k {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--tx-faint);
+  font-weight: 700;
+}
+
+.rbar-v {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--tx-dim);
+  text-align: right;
+}
+
+.hc-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -150,6 +150,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func restartDaemons() {
+        let client = self.client
+        Task {
+            _ = await client.restartDaemons()
+            try? await Task.sleep(for: .seconds(3))
+            await self.refresh()
+        }
+    }
+
     func tokS(for model: String) -> Double? {
         metrics?.byKey?["tok_s.\(model)"]?.p50
     }
