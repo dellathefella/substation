@@ -76,12 +76,15 @@ public enum Tuner {
             return minFree >= perNode
         }
 
-        let pool = cfg.models.sorted { $0.sizeGB < $1.sizeGB }
+        let pool = cfg.models.filter { $0.kind == "local" }.sorted { $0.sizeGB < $1.sizeGB }
+        let remoteN = cfg.models.filter { $0.kind != "local" }.count
         guard !pool.isEmpty else {
+            var warns = ["No local catalog models available to tune."]
+            if remoteN > 0 { warns.append("\(remoteN) remote/external profile(s) do not consume local RAM; assign them to tiers directly.") }
             return Report(picks: [], alignedCtx: cfg.defaultCtx, ctxWasMisaligned: false,
                           clusterEnabled: cfg.clusterEnabled, nodes: peers, localFreeGB: local.freeGB,
-                          gpuWiredLimitGB: limit, warnings: ["No catalog models available to tune."],
-                          summary: "No models to tune.")
+                          gpuWiredLimitGB: limit, warnings: warns,
+                          summary: "No local models to tune.")
         }
 
         let fitsAny = pool.filter { fitsLocal($0) || fitsSplit($0) }

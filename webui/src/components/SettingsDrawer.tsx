@@ -75,7 +75,8 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
   const [tiers, setTiers] = useState<Record<string, string>>({});
   const [defaultModel, setDefaultModel] = useState('');
   const [token, setToken] = useState('');
-  const [tab, setTab] = useState<'form' | 'json'>('form');
+  const [tab, setTab] = useState<'form' | 'json' | 'profiles'>('form');
+  const [profiles, setProfiles] = useState<NonNullable<RuntimeConfig['models']>>([]);
   const [jsonText, setJsonText] = useState('');
   const [jsonErr, setJsonErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -95,6 +96,7 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     setDraft(next);
     setJsonText(JSON.stringify(config ?? {}, null, 2));
     setJsonErr(null);
+    setProfiles((config?.models ?? []).map((m) => ({ ...m })));
     const t: Record<string, string> = {};
     for (const tier of TIERS) t[tier] = config?.orchestrator?.tiers?.[tier]?.models?.[0] ?? '';
     setTiers(t);
@@ -177,6 +179,164 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     }
   };
 
+  const saveProfiles = async (): Promise<void> => {
+    const cleaned = profiles
+      .map((p) => {
+        const o: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(p)) {
+          if (v === undefined || v === null || v === '') continue;
+          if (Array.isArray(v) && v.length === 0) continue;
+          o[k] = v;
+        }
+        return o;
+      })
+      .filter((p) => typeof p.name === 'string' && p.name !== '');
+    if (cleaned.length !== profiles.length || cleaned.some((c, i) => c.name !== profiles[i]?.name)) {
+      /* fallthrough: names trimmed */
+    }
+    if (cleaned.length === 0) {
+      pushToast('error', 'Keep at least one profile with a name');
+      return;
+    }
+    setSaving(true);
+    const res = await api.putConfig({ models: cleaned } as unknown as ConfigPatch);
+    setSaving(false);
+    if (res.ok) {
+      const fresh = await api.getConfig();
+      replaceConfig(fresh);
+      pushToast('success', 'Profiles saved', `${cleaned.length} profile(s) applied + persisted`);
+      props.onClose();
+    } else {
+      const body = res.body as { error?: { message?: string } } | null;
+      pushToast('error', 'Profiles save failed', body?.error?.message ?? String(res.status));
+    }
+  };
+
+  const upd = (i: number, patch: Partial<NonNullable<RuntimeConfig['models']>[number]>): void =>
+    setProfiles((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+
+  const clusterOn = config?.cluster?.enabled === true;
+  const nodeIds = Object.keys((config as Record<string, unknown> | null)?.nodes as Record<string, unknown> | undefined ?? {});
+  const placementOf = (p: NonNullable<RuntimeConfig['models']>[number]): string => {
+    const pl = p.placement ?? 'local';
+    if (pl === 'local' || pl.startsWith('node:')) return pl;
+    return 'split';
+  };
+
+  const profilesTab = (
+    <div className="profiles">
+      <p className="drawer-note">
+        Full catalog · options adapt to the profile type. Saving <b>replaces</b> the whole model catalog.
+      </p>
+      {profiles.map((p, i) => (
+        <div className="prof-card" key={`${p.name || 'new'}-${i}`}>
+          <div className="prof-head">
+            <input className="prof-name" placeholder="profile name" value={p.name ?? ''} onChange={(e) => upd(i, { name: e.target.value })} />
+            <select
+              value={p.kind ?? 'local'}
+              onChange={(e) => {
+                const kind = e.target.value as 'local' | 'external' | 'remote';
+                upd(i, { kind: kind, ...(kind === 'local' ? { protocol: undefined, api_key: undefined, base_url: undefined, model: undefined } : { kind, gguf: undefined, flags: undefined, size_gb: undefined, ctx: undefined, placement: undefined, node: undefined }) });
+              }}
+            >
+              <option value="local">local llama.cpp</option>
+              <option value="external">external server (LAN)</option>
+              <option value="remote">cloud / remote</option>
+            </select>
+            <select value={p.tier ?? 'balanced'} onChange={(e) => upd(i, { tier: e.target.value })}>
+              <option value="fast">tier · fast</option>
+              <option value="balanced">tier · balanced</option>
+              <option value="smart">tier · smart</option>
+            </select>
+            <button className="banner-x" aria-label="Remove profile" onClick={() => setProfiles((ps) => ps.filter((_, j) => j !== i))}>✕</button>
+          </div>
+
+          {(p.kind ?? 'local') === 'local' ? (
+            <>
+              <div className="prof-grid">
+                <label className="field">
+                  <span className="field-label">GGUF path <span className="field-hint">~ and $VAR ok</span></span>
+                  <input type="text" value={p.gguf ?? ''} onChange={(e) => upd(i, { gguf: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span className="field-label">size <span className="field-hint">GB</span></span>
+                  <input type="number" step={0.1} value={p.size_gb ?? ''} onChange={(e) => upd(i, { size_gb: Number(e.target.value) })} />
+                </label>
+                <label className="field">
+                  <span className="field-label">ctx</span>
+                  <input type="number" step={1024} value={p.ctx ?? ''} onChange={(e) => upd(i, { ctx: Number(e.target.value) })} />
+                </label>
+                <label className="field">
+                  <span className="field-label">placement {!clusterOn ? <span className="field-hint">split needs cluster on</span> : null}</span>
+                  <select value={placementOf(p)} onChange={(e) => upd(i, { placement: e.target.value, node: undefined })}>
+                    <option value="local">local</option>
+                    {nodeIds.map((n) => (
+                      <option key={n} value={`node:${n}`}>{`node · ${n}`}</option>
+                    ))}
+                    <option value="split" disabled={!clusterOn}>split (RPC, 2+ nodes)</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field-label">llama.cpp flags <span className="field-hint">space separated</span></span>
+                  <input type="text" placeholder="--no-mmap --flash-attn" value={(p.flags ?? []).join(' ')} onChange={(e) => upd(i, { flags: e.target.value.split(/\s+/).filter(Boolean) })} />
+                </label>
+              </div>
+              <div className="prof-note">
+                Non-RPC local profiles live on exactly one node. A <code>split</code> profile streams weights over GGML RPC to
+                every eligible joined node with worker-side weight caching disabled.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="prof-grid">
+                <label className="field">
+                  <span className="field-label">base URL <span className="field-hint">no trailing /v1</span></span>
+                  <input type="text" placeholder="http://192.168.7.248:8083" value={p.base_url ?? ''} onChange={(e) => upd(i, { base_url: e.target.value })} />
+                </label>
+                <label className="field">
+                  <span className="field-label">upstream model id</span>
+                  <input type="text" placeholder={p.name ?? 'provider model id'} value={p.model ?? ''} onChange={(e) => upd(i, { model: e.target.value })} />
+                </label>
+                {p.kind === 'remote' ? (
+                  <>
+                    <label className="field">
+                      <span className="field-label">protocol</span>
+                      <select value={p.protocol ?? 'openai'} onChange={(e) => upd(i, { protocol: e.target.value as 'openai' | 'anthropic' })}>
+                        <option value="openai">openai-compatible</option>
+                        <option value="anthropic">anthropic</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="field-label">api key</span>
+                      <input type="password" value={p.api_key ?? ''} onChange={(e) => upd(i, { api_key: e.target.value })} />
+                    </label>
+                  </>
+                ) : (
+                  <label className="field">
+                    <span className="field-label">api key <span className="field-hint">optional</span></span>
+                    <input type="password" value={p.api_key ?? ''} onChange={(e) => upd(i, { api_key: e.target.value })} />
+                  </label>
+                )}
+              </div>
+              <div className="prof-note">
+                Remote/external profiles have no local weights: no ctx/KV/RAM/placement/flags options — Substation routes to
+                them and proxies through the same cache, usage ledger and transparent model naming.
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+      <div className="prof-actions">
+        <button className="btn" onClick={() => setProfiles((ps) => [...ps, { name: '', kind: 'remote', tier: 'smart', protocol: 'openai' }])}>
+          + Add profile
+        </button>
+        <button className="btn btn-primary" onClick={() => void saveProfiles()} disabled={saving}>
+          {saving ? 'Saving…' : 'Save profiles to daemon'}
+        </button>
+      </div>
+    </div>
+  );
+
   const act = async (kind: 'tune' | 'rotate' | 'reset'): Promise<void> => {
     if (kind === 'reset' && !window.confirm('Reset config to factory defaults? This disables auth and restores the template model catalog.')) return;
     setBusy(kind);
@@ -241,6 +401,9 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
           <button className={`nav-btn${tab === 'form' ? ' active' : ''}`} onClick={() => setTab('form')}>
             Form
           </button>
+          <button className={`nav-btn${tab === 'profiles' ? ' active' : ''}`} onClick={() => setTab('profiles')}>
+            Profiles
+          </button>
           <button className={`nav-btn${tab === 'json' ? ' active' : ''}`} onClick={() => setTab('json')}>
             JSON (all keys)
           </button>
@@ -298,7 +461,9 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
             {saving ? 'Saving…' : 'Save & push to daemon'}
           </button>
           </form>
-        ) : (
+        ) : null}
+        {tab === 'profiles' ? profilesTab : null}
+        {tab === 'json' ? (
           <div className="drawer-json">
             <p className="drawer-note">
               Full <code>/api/config</code> tree · every key editable (triage, ports, bin paths, model profiles:
@@ -318,7 +483,7 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
               {saving ? 'Pushing…' : 'Push full config to daemon'}
             </button>
           </div>
-        )}
+        ) : null}
         <div className="drawer-actions">
           <button className="btn" onClick={() => void act('tune')} disabled={busy !== null} title="POST /api/tune/apply">
             {busy === 'tune' ? 'Tuning…' : '🎛 Auto-tune & apply'}

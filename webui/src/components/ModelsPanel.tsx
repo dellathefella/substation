@@ -43,7 +43,8 @@ function ModelCardView(props: { name: string }): React.JSX.Element {
     if (!res.ok) pushToast('error', `${card.state === 'loaded' ? 'Unload' : 'Load'} ${name} failed`, String(res.status || 'daemon unreachable'));
   };
 
-  const actionable = card.state !== 'loading' && !busy;
+  const remoteKind = card.kind === 'remote' || card.kind === 'external';
+  const actionable = !remoteKind && card.state !== 'loading' && !busy;
   return (
     <li className={`model-card st-${card.state}`}>
       <div className="mc-head">
@@ -106,8 +107,19 @@ function ModelCardView(props: { name: string }): React.JSX.Element {
         className={`btn mc-btn ${card.state === 'loaded' ? 'btn-danger' : 'btn-primary'}`}
         onClick={() => void toggle()}
         disabled={!actionable}
+        title={remoteKind ? `${card.kind} profile — served by its upstream` : undefined}
       >
-        {busy ? '…' : card.state === 'loading' ? 'loading…' : card.state === 'loaded' ? 'Unload' : 'Load'}
+        {remoteKind
+          ? card.kind === 'remote'
+            ? '☁ remote'
+            : '🌐 external'
+          : busy
+            ? '…'
+            : card.state === 'loading'
+              ? 'loading…'
+              : card.state === 'loaded'
+                ? 'Unload'
+                : 'Load'}
       </button>
     </li>
   );

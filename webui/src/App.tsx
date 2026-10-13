@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { bootstrap } from './api.js';
 import { CachePanel } from './components/CachePanel.js';
 import { ChatPanel } from './components/ChatPanel.js';
+import { ClusterWizard } from './components/ClusterWizard.js';
+import { ConnectPanel } from './components/ConnectPanel.js';
 import { ClusterPanel } from './components/ClusterPanel.js';
 import { Header } from './components/Header.js';
 import type { View } from './components/Header.js';
@@ -67,9 +69,17 @@ export function App(): React.JSX.Element {
             <ClusterPanel />
           </div>
         </main>
-      ) : (
+      ) : view === 'chat' ? (
         <main className="chat-view">
           <ChatPanel />
+        </main>
+      ) : view === 'connect' ? (
+        <main className="chat-view">
+          <ConnectPanel />
+        </main>
+      ) : (
+        <main className="chat-view">
+          <ClusterWizard />
         </main>
       )}
       <footer className="footer">

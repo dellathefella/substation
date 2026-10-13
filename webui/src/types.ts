@@ -47,9 +47,15 @@ export interface ModelMetrics {
 export interface ModelCard {
   name: string;
   state: 'loaded' | 'loading' | 'unloaded';
+  kind?: 'local' | 'external' | 'remote';
+  tier?: string;
   node?: string;
   placement?: string;
   flags?: string[];
+  base_url?: string;
+  remote_model?: string;
+  protocol?: string;
+  api_key_masked?: string | null;
   size_gb?: number;
   ctx?: number;
   split?: boolean;
@@ -132,6 +138,7 @@ export interface RuntimeConfig {
   };
   models?: {
     name: string;
+    kind?: 'local' | 'external' | 'remote';
     tier?: string;
     size_gb?: number;
     ctx?: number;
@@ -139,6 +146,13 @@ export interface RuntimeConfig {
     node?: string;
     flags?: string[];
     gguf?: string;
+    dir?: string;
+    file?: string;
+    base_url?: string;
+    api_key?: string;
+    model?: string;
+    remote_model?: string;
+    protocol?: 'openai' | 'anthropic';
   }[];
 }
 

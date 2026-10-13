@@ -12,7 +12,7 @@ import {
   type Pin,
 } from '../chat.js';
 
-const PINS: readonly Pin[] = ['auto', 'auto-fast', 'auto-smart'];
+
 
 function fmtTs(ts: number): string {
   if (!Number.isFinite(ts) || ts <= 0) return '';
@@ -22,11 +22,15 @@ function fmtTs(ts: number): string {
 
 export function ChatPanel(): React.JSX.Element {
   const pushToast = useStore((s) => s.pushToast);
+  const status = useStore((s) => s.status);
+  const cards = useStore((s) => s.models);
+  const routerOn = (status as { auto_router?: string } | null)?.auto_router !== 'disabled';
+  const pins: string[] = routerOn ? ['auto', 'auto-fast', 'auto-smart'] : cards.map((m) => m.name);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
-  const [pin, setPin] = useState<Pin>('auto');
+  const [pin, setPin] = useState<string>('auto');
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -186,7 +190,7 @@ export function ChatPanel(): React.JSX.Element {
 
         <footer className="chat-composer">
           <select className="chat-pin" value={pin} onChange={(e) => setPin(e.target.value as Pin)} title="Route pin">
-            {PINS.map((p) => (
+            {pins.map((p) => (
               <option key={p} value={p}>
                 {p}
               </option>

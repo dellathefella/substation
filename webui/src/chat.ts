@@ -72,7 +72,7 @@ export async function fetchMessages(id: string): Promise<ChatMessage[]> {
   }
 }
 
-export type Pin = 'auto' | 'auto-fast' | 'auto-smart';
+export type Pin = string;
 
 /** Stream an assistant reply via SSE; resolves with the full text. */
 export async function sendChatStream(

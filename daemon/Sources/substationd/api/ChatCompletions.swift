@@ -109,6 +109,9 @@ public struct ChatPipeline: Sendable {
             }
         }
         await orch.metrics.increment("cache_misses")
+        if let remote = route.remote {
+            return try await remoteComplete(remote, route: route, body: body)
+        }
         await orch.cache.noteCanonical(canonicalJSON(.object([
             "messages": body["messages"] ?? .array([]),
         ])))
@@ -182,7 +185,8 @@ public struct ChatPipeline: Sendable {
     /// the REAL model/node/tier (the public API never exposes these).
     public func stream(
         body: JSONValue, sessionKey: String?,
-        chat: ChatActor? = nil, chatID: String? = nil
+        chat: ChatActor? = nil, chatID: String? = nil,
+        anthropic: String? = nil
     ) async throws -> Response {
         let state = orch.state
         if await state.paused { throw APIError.paused }
@@ -200,6 +204,10 @@ public struct ChatPipeline: Sendable {
             ("bytes", .jInt(bytes)),
             ("session", sessionKey.map { JSONValue.string($0) } ?? .null),
         ])
+
+        if let remote = route.remote {
+            return try await remoteStream(remote, route: route, body: body)
+        }
 
         var engineBody = body.objectValue ?? [:]
         engineBody["model"] = .string(route.model)
@@ -235,6 +243,24 @@ public struct ChatPipeline: Sendable {
             var lastTick = Date()
             var tickTokens = 0
             let batchMs = await orch.cfg.snapshot.wsTickBatchMs
+            let anth = anthropic
+            if let msgID = anth {
+                let start: JSONValue = .object([
+                    "type": .string("message_start"),
+                    "message": .object([
+                        "id": .string(msgID), "type": .string("message"), "role": .string("assistant"),
+                        "model": .string(virtualModel), "content": .array([]),
+                        "stop_reason": .null, "stop_sequence": .null,
+                        "usage": .object(["input_tokens": .jInt(0), "output_tokens": .jInt(0)]),
+                    ]),
+                ])
+                let block: JSONValue = .object([
+                    "type": .string("content_block_start"), "index": .jInt(0),
+                    "content_block": .object(["type": .string("text"), "text": .string("")]),
+                ])
+                try await writer.write(.buffer(ByteBuffer(string: "event: message_start\ndata: \(JSONCoding.encodeString(start))\n\n")))
+                try await writer.write(.buffer(ByteBuffer(string: "event: content_block_start\ndata: \(JSONCoding.encodeString(block))\n\n")))
+            }
             do {
                 let stream = orch.client.streamSSE(url: engine.baseURL + "/v1/chat/completions", body: engineBodyJSON)
                 for try await payload in stream {
@@ -278,7 +304,17 @@ public struct ChatPipeline: Sendable {
                         outStr = "data: \(JSONCoding.encodeString(.object(obj)))\n\n"
                     }
                     if !deltaText.isEmpty { recorder.append(deltaText) }
-                    try await writer.write(.buffer(ByteBuffer(string: outStr)))
+                    if anth != nil {
+                        if !deltaText.isEmpty {
+                            let d: JSONValue = .object([
+                                "type": .string("content_block_delta"), "index": .jInt(0),
+                                "delta": .object(["type": .string("text_delta"), "text": .string(deltaText)]),
+                            ])
+                            try await writer.write(.buffer(ByteBuffer(string: "event: content_block_delta\ndata: \(JSONCoding.encodeString(d))\n\n")))
+                        }
+                    } else {
+                        try await writer.write(.buffer(ByteBuffer(string: outStr)))
+                    }
 
                     if Date().timeIntervalSince(lastTick) * 1000 >= Double(batchMs) {
                         let sec = max(0.25, Date().timeIntervalSince(lastTick))
@@ -290,6 +326,19 @@ public struct ChatPipeline: Sendable {
                         lastTick = Date()
                         tickTokens = 0
                     }
+                }
+                if let msgID = anth {
+                    let outTok = Int(usageCompletion > 0 ? usageCompletion : tokens)
+                    let stop: JSONValue = .object(["type": .string("content_block_stop"), "index": .jInt(0)])
+                    let md: JSONValue = .object([
+                        "type": .string("message_delta"),
+                        "delta": .object(["stop_reason": .string("end_turn"), "stop_sequence": .null]),
+                        "usage": .object(["output_tokens": .jInt(outTok)]),
+                    ])
+                    let ms: JSONValue = .object(["type": .string("message_stop"), "message_id": .string(msgID)])
+                    try await writer.write(.buffer(ByteBuffer(string: "event: content_block_stop\ndata: \(JSONCoding.encodeString(stop))\n\n")))
+                    try await writer.write(.buffer(ByteBuffer(string: "event: message_delta\ndata: \(JSONCoding.encodeString(md))\n\n")))
+                    try await writer.write(.buffer(ByteBuffer(string: "event: message_stop\ndata: \(JSONCoding.encodeString(ms))\n\n")))
                 }
                 try await writer.write(.end)
             } catch {

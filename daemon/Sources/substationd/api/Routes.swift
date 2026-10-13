@@ -64,26 +64,36 @@ public enum Routes {
             let cfg = await kit.cfg.snapshot
             let autoOK = Orchestrator.defaultModelName(cfg) != nil
             let orchUp = await kit.engines.orchestratorReady(cfg: cfg)
-            var data: [JSONValue] = ["auto", "auto-fast", "auto-smart"].map { name in
-                .object([
-                    "id": .string(name),
-                    "object": .string("model"),
-                    "owned_by": .string("substation-virtual"),
-                    "substation": .object([
-                        "auto_available": .bool(!cfg.orchestratorEnabled || name != "auto" || autoOK),
-                        "auto_router": .string(cfg.orchestratorEnabled ? "enabled" : "disabled"),
-                        "single_model": Orchestrator.defaultModelName(cfg).map { JSONValue.string($0) } ?? .null,
-                        "orchestrator_up": .bool(orchUp),
-                        "triage_model_present": .bool(FileManager.default.fileExists(atPath: cfg.triageGguf)),
-                    ]),
-                ])
+            var data: [JSONValue] = []
+            if cfg.orchestratorEnabled {
+                data += ["auto", "auto-fast", "auto-smart"].map { name in
+                    .object([
+                        "id": .string(name),
+                        "object": .string("model"),
+                        "owned_by": .string("substation-virtual"),
+                        "substation": .object([
+                            "auto_available": .bool(name != "auto" || autoOK),
+                            "auto_router": .string("enabled"),
+                            "orchestrator_up": .bool(orchUp),
+                            "triage_model_present": .bool(FileManager.default.fileExists(atPath: cfg.triageGguf)),
+                        ]),
+                    ])
+                }
             }
             for m in cfg.models {
-                data.append(.object([
+                var obj: [String: JSONValue] = [
                     "id": .string(m.name),
                     "object": .string("model"),
-                    "owned_by": .string("substation"),
-                ]))
+                    "owned_by": .string(m.kind == "local" ? "substation" : "substation-\(m.kind)"),
+                    "substation": .object([
+                        "kind": .string(m.kind),
+                        "tier": .string(m.tier),
+                        "placement": .string(m.placement),
+                        "auto_router": .string(cfg.orchestratorEnabled ? "enabled" : "disabled"),
+                    ]),
+                ]
+                if let b = m.baseUrl { obj["base_url"] = .string(b) }
+                data.append(.object(obj))
             }
             return jsonResponse(.object(["object": .string("list"), "data": .array(data)]))
         }
@@ -208,8 +218,13 @@ public enum Routes {
             let live = await kit.engines.list()
             return jsonResponse(.array(cfg.models.map { m in
                 let engine = live.first { $0.model == m.name }
+                var masked: String?
+                if let k = m.apiKey, !k.isEmpty {
+                    masked = k.count > 8 ? String(k.prefix(4)) + "…" + String(k.suffix(4)) : "****"
+                }
                 return .object([
                     "name": .string(m.name),
+                    "kind": .string(m.kind),
                     "tier": .string(m.tier),
                     "gguf": .string(m.gguf),
                     "size_gb": .jDouble(m.sizeGB),
@@ -219,6 +234,10 @@ public enum Routes {
                     "node": engine.map { JSONValue.string($0.node) } ?? (m.node.map { JSONValue.string($0) } ?? .null),
                     "flags": .array(m.flags.map { JSONValue.string($0) }),
                     "port": engine.map { JSONValue.jInt($0.port) } ?? .null,
+                    "base_url": m.baseUrl.map { JSONValue.string($0) } ?? .null,
+                    "remote_model": m.remoteModel.map { JSONValue.string($0) } ?? .null,
+                    "protocol": .string(m.proto),
+                    "api_key_masked": masked.map { JSONValue.string($0) } ?? .null,
                 ])
             }))
         }
@@ -229,6 +248,9 @@ public enum Routes {
             let cfg = await kit.cfg.snapshot
             guard let model = cfg.model(name) else {
                 throw APIError.notFound("model \(name)")
+            }
+            guard model.kind == "local" else {
+                throw APIError.badRequest("\(model.kind) profiles are served by their upstream — nothing to load locally")
             }
             let id = "admin-" + String(UUID().uuidString.prefix(6))
             try? await kit.events.publish("engine.wait", [("id", .string(id)), ("ms", .jInt(0)), ("reason", .string("loading"))])
@@ -520,6 +542,8 @@ public enum Routes {
         // MARK: Chat
 
         registerChat(app, kit)
+        registerAnthropic(app, kit)
+        registerConnectors(app, kit)
 
         // MARK: WebSocket
 

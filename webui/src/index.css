@@ -1649,3 +1649,344 @@ code {
   padding: 6px 8px;
   white-space: pre-wrap;
 }
+
+/* ---------- connect + cluster wizard panes ---------- */
+
+.connect-wrap,
+.wiz-wrap {
+  flex: 1;
+  width: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 2px;
+}
+
+.connect-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.connect-title,
+.wiz-card h3 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.wiz-card h4 {
+  font-size: 12px;
+  margin: 2px 0;
+}
+
+.connect-sub,
+.wiz-note,
+.connect-card-note,
+.prof-note {
+  color: var(--tx-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 4px 0;
+}
+
+.prof-note {
+  font-size: 11px;
+  color: var(--tx-faint);
+}
+
+.connect-key {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.connect-key-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-faint);
+}
+
+.connect-key-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--tx);
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.connect-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+}
+
+.connect-card,
+.wiz-card,
+.prof-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.connect-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.connect-card-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.connect-card-lang {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--tx-faint);
+}
+
+.connect-file {
+  margin-top: 8px;
+}
+
+.connect-code {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--tx);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 10px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0 0 6px;
+}
+
+.connect-file-actions,
+.prof-actions,
+.wiz-nav {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.connect-err {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #fca5a5;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.wiz-steps {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wiz-step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tx-dim);
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.wiz-step.active {
+  color: #dbeafe;
+  border-color: rgba(59, 130, 246, 0.6);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.wiz-step.done {
+  border-color: rgba(45, 212, 191, 0.4);
+}
+
+.wiz-step-n {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  font-size: 9px;
+}
+
+.wiz-step.active .wiz-step-n {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+.wiz-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wiz-ifaces {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.wiz-ifaces th {
+  text-align: left;
+  color: var(--tx-faint);
+  font-weight: 600;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.wiz-ifaces td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--tx);
+}
+
+.wiz-ifaces .wiz-tb td {
+  background: rgba(245, 165, 36, 0.07);
+}
+
+.wiz-code-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wiz-code,
+.wiz-code-big {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  padding: 6px 9px;
+  overflow-wrap: anywhere;
+}
+
+.wiz-code-big {
+  font-size: 16px;
+  letter-spacing: 0.2em;
+  color: #93c5fd;
+}
+
+.wiz-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .wiz-two {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wiz-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--tx);
+}
+
+.wiz-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.wiz-warn {
+  width: 100%;
+  color: #fbbf24;
+  font-size: 11px;
+}
+
+.wiz-msg {
+  font-size: 12px;
+  color: #fbbf24;
+}
+
+.wiz-msg.ok {
+  color: #2dd4bf;
+}
+
+/* ---------- profiles manager ---------- */
+
+.profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prof-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.prof-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tx);
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  min-width: 140px;
+}
+
+.prof-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.prof-card select,
+.prof-card input[type='text'],
+.prof-card input[type='number'],
+.prof-card input[type='password'] {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx);
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 7px;
+  max-width: 100%;
+}

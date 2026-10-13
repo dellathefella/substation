@@ -119,8 +119,15 @@ export async function bootstrap(): Promise<Bootstrap> {
     : [];
   let modelCards: ModelCard[] = [];
   const mv = asRecord(models);
-  if (Array.isArray(models)) modelCards = models as ModelCard[];
-  else if (mv && Array.isArray(mv['models'])) modelCards = mv['models'] as ModelCard[];
+  const raw: unknown[] = Array.isArray(models) ? (models as unknown[]) : mv && Array.isArray(mv['models']) ? mv['models'] : [];
+  modelCards = raw.map((r) => {
+    const o = (asRecord(r) ?? {}) as Record<string, unknown>;
+    return {
+      ...(o as object),
+      name: String(o['name'] ?? ''),
+      state: o['loading'] === true ? 'loading' : o['loaded'] === true ? 'loaded' : 'unloaded',
+    } as ModelCard;
+  });
   return {
     status: asRecord(status) ? status : null,
     metrics: asRecord(metrics) ? metrics : null,

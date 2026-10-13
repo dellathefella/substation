@@ -14,6 +14,15 @@ public struct CatalogModel: Sendable, Hashable {
     public var placement: String
     /// Node this model resides on (joins placement when placement is unset).
     public var node: String?
+    /// "local" (llama.cpp on this cluster) | "external" (already-running
+    /// server on the LAN) | "remote" (cloud provider; api_key applies).
+    public var kind: String
+    public var baseUrl: String?
+    public var apiKey: String?
+    /// Model id to send upstream (defaults to the catalog name).
+    public var remoteModel: String?
+    /// Upstream wire protocol for external/remote: "openai" | "anthropic".
+    public var proto: String
     public var flags: [String]
     /// KV-cache estimate: MB per 1k context tokens per parallel slot.
     /// 0 → estimator default (100 MB/1k/slot).
@@ -91,28 +100,33 @@ public struct ConfigSnapshot: Sendable {
     public var models: [CatalogModel] {
         tree["models"]?.arrayValue?.compactMap { m in
             guard let name = m["name"]?.stringValue else { return nil }
+            let kind = m["kind"]?.stringValue ?? "local"
             let dirRaw = m["dir"]?.stringValue
             let dir = dirRaw.map { Self.expandPath($0) }
             let file = m["file"]?.stringValue
             let rawGguf = m["gguf"]?.stringValue
-            var gguf: String
-            if let dir, let file {
-                gguf = dir + "/" + file
-            } else if let rawGguf {
-                let expanded = Self.expandPath(rawGguf)
-                if expanded.hasPrefix("/") {
-                    gguf = expanded
-                } else if FileManager.default.fileExists(atPath: expanded) {
-                    gguf = expanded  // already resolvable relative to cwd
+            var gguf = ""
+            if kind == "local" {
+                if let dir, let file {
+                    gguf = dir + "/" + file
+                } else if let rawGguf {
+                    let expanded = Self.expandPath(rawGguf)
+                    if expanded.hasPrefix("/") {
+                        gguf = expanded
+                    } else if FileManager.default.fileExists(atPath: expanded) {
+                        gguf = expanded  // already resolvable relative to cwd
+                    } else {
+                        gguf = modelsDir + "/" + expanded
+                    }
+                } else if let dir {
+                    gguf = dir + "/" + name + ".gguf"
                 } else {
-                    gguf = modelsDir + "/" + expanded
+                    gguf = modelsDir + "/" + name + ".gguf"
                 }
-            } else if let dir {
-                gguf = dir + "/" + name + ".gguf"
-            } else {
-                gguf = modelsDir + "/" + name + ".gguf"
+                gguf = Self.normalize(gguf)
+            } else if let rawGguf {
+                gguf = Self.normalize(Self.expandPath(rawGguf))
             }
-            gguf = Self.normalize(gguf)
             return CatalogModel(
                 name: name,
                 gguf: gguf,
@@ -124,6 +138,11 @@ public struct ConfigSnapshot: Sendable {
                 placement: m["placement"]?.stringValue
                     ?? (m["node"]?.stringValue.map { $0.isEmpty || $0 == "local" ? "local" : "node:\($0)" } ?? "local"),
                 node: m["node"]?.stringValue,
+                kind: kind,
+                baseUrl: m["base_url"]?.stringValue.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 },
+                apiKey: m["api_key"]?.stringValue,
+                remoteModel: m["model"]?.stringValue ?? m["remote_model"]?.stringValue,
+                proto: m["protocol"]?.stringValue ?? "openai",
                 flags: m["flags"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
                 kvMBPer1k: m["kv_mb_per_1k_ctx"]?.doubleValue ?? 0,
                 slots: m["parallel_slots"]?.intValue ?? 4

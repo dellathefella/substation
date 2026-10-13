@@ -23,6 +23,29 @@ public struct RouteInfo: Sendable {
     public var sticky: Bool
     public var waitedQueueMs: Double
     public var waitedLoadingMs: Double
+    public var remote: RemoteTarget?
+}
+
+/// A non-local upstream (cloud provider or an already-running server).
+public struct RemoteTarget: Sendable {
+    public var url: String       // base URL, no trailing slash
+    public var key: String?      // bearer / x-api-key
+    public var proto: String     // "openai" | "anthropic"
+    public var model: String     // upstream model id
+
+    public init(url: String, key: String?, proto: String, model: String) {
+        self.url = url
+        self.key = key
+        self.proto = proto
+        self.model = model
+    }
+
+    public static func host(of url: String) -> String {
+        var s = url
+        if let r = s.range(of: "://") { s = String(s[r.upperBound...]) }
+        if let i = s.firstIndex(of: "/") { s = String(s[s.startIndex..<i]) }
+        return s
+    }
 }
 
 /// Triage → tier → catalog → placement, with session stickiness and prefetch.
@@ -64,10 +87,11 @@ public struct Orchestrator: Sendable {
     /// `orchestrator.default_model` if loadable, else the smallest catalog model.
     public static func defaultModelName(_ cfg: ConfigSnapshot) -> String? {
         let fm = FileManager.default
-        if !cfg.defaultModel.isEmpty, let m = cfg.model(cfg.defaultModel), fm.fileExists(atPath: m.gguf) {
+        func live(_ m: CatalogModel) -> Bool { m.kind != "local" || fm.fileExists(atPath: m.gguf) }
+        if !cfg.defaultModel.isEmpty, let m = cfg.model(cfg.defaultModel), live(m) {
             return cfg.defaultModel
         }
-        return cfg.models.filter { fm.fileExists(atPath: $0.gguf) }.min(by: { $0.sizeGB < $1.sizeGB })?.name
+        return cfg.models.filter(live).min(by: { $0.sizeGB < $1.sizeGB })?.name
     }
 
     /// Largest LOCAL-placement catalog model that fits free memory now,
@@ -163,6 +187,20 @@ public struct Orchestrator: Sendable {
                 throw APIError.noModelLoaded("Auto-router is disabled and the catalog is empty; define a model or set orchestrator.default_model.")
             }
             let catalog = cfg.model(d)
+            // Remote/external profile as the fixed model: proxy straight upstream.
+            if let catalog, catalog.kind != "local", let base = catalog.baseUrl, !base.isEmpty {
+                try? await events.publish("router.disabled", [
+                    ("id", .string(requestId)), ("model", .string(d)), ("node", .string("remote")),
+                ])
+                return RouteInfo(
+                    requestId: requestId, virtualModel: virtual, tier: "single", confidence: 1,
+                    method: "router_disabled", model: d, node: "remote", split: false, rpcPeers: [],
+                    reason: "router_disabled remote:\(catalog.kind)", engine: Self.remoteEngine(catalog, base: base),
+                    sticky: false, waitedQueueMs: 0, waitedLoadingMs: 0,
+                    remote: RemoteTarget(url: base, key: catalog.apiKey, proto: catalog.proto,
+                                         model: catalog.remoteModel ?? catalog.name)
+                )
+            }
             var placement = Placement.parse(catalog?.placement ?? "local")
             if !cfg.clusterEnabled { placement = .local }
             let queueWait = await admission.acquire()
@@ -333,7 +371,29 @@ public struct Orchestrator: Sendable {
             break
         }
 
-        // 5) Admission gate (queued), then load (loading) — never 503.
+        // 5) Remote/external profile → proxy straight upstream; no local engine.
+        if finalCatalog.kind != "local", let base = finalCatalog.baseUrl, !base.isEmpty {
+            try? await events.publish("route.selected", [
+                ("id", .string(requestId)), ("model", .string(modelName)), ("node", .string("remote")),
+                ("split", .bool(false)), ("rpc_peers", .array([])),
+                ("reason", .string("tier=\(tier) conf=\(String(format: "%.2f", decision.confidence)) method=\(decision.method) remote=\(finalCatalog.kind) target:\(base)")),
+            ])
+            await metrics.increment("routed_total")
+            if let key = sessionKey, !key.isEmpty {
+                await sessions.pin(key, model: modelName, tier: tier, rank: SessionActor.rank(of: tier))
+            }
+            return RouteInfo(
+                requestId: requestId, virtualModel: virtual, tier: tier,
+                confidence: decision.confidence, method: decision.method,
+                model: modelName, node: "remote", split: false, rpcPeers: [],
+                reason: "remote:\(finalCatalog.kind)", engine: Self.remoteEngine(finalCatalog, base: base),
+                sticky: sticky, waitedQueueMs: 0, waitedLoadingMs: 0,
+                remote: RemoteTarget(url: base, key: finalCatalog.apiKey, proto: finalCatalog.proto,
+                                     model: finalCatalog.remoteModel ?? finalCatalog.name)
+            )
+        }
+
+        // 6) Admission gate (queued), then load (loading) — never 503.
         let queueWait = await admission.acquire()
         var loadedWait = 0.0
         if queueWait > 1 {
@@ -391,7 +451,16 @@ public struct Orchestrator: Sendable {
             confidence: decision.confidence, method: decision.method,
             model: modelName, node: engine.node, split: engine.split, rpcPeers: splitPeers,
             reason: "tier=\(tier)", engine: engine, sticky: sticky,
-            waitedQueueMs: queueWait, waitedLoadingMs: loadedWait
+            waitedQueueMs: queueWait, waitedLoadingMs: loadedWait, remote: nil
+        )
+    }
+
+    static func remoteEngine(_ m: CatalogModel, base: String) -> RunningEngine {
+        let now = Date()
+        return RunningEngine(
+            model: m.name, node: "remote", host: RemoteTarget.host(of: base), port: 0,
+            pid: 0, split: false, rpcPeers: [], placement: m.kind,
+            loadedAt: now, lastUsed: now, sizeGB: 0, ctx: m.ctx
         )
     }
 

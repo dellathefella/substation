@@ -133,20 +133,65 @@ public enum HostInfo {
     }
 
     public static func thunderboltActive() -> Bool {
+        interfaces().contains { $0.kind == "thunderbolt-bridge" && $0.running }
+    }
+
+    public struct NetIface: Sendable {
+        public var name: String
+        public var ip: String
+        public var netmask: String
+        public var up: Bool
+        public var running: Bool
+        public var kind: String  // thunderbolt-bridge | thunderbolt | wifi | ethernet | loopback | vpn | other
+    }
+
+    /// IPv4 inventory for the cluster wizard: name, address, flags + kind guess.
+    public static func interfaces() -> [NetIface] {
+        var out: [NetIface] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return false }
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return out }
         defer { freeifaddrs(ifaddr) }
+        var byName: [String: (flags: Int32, ip: String, mask: String)] = [:]
+        var order: [String] = []
         var ptr: UnsafeMutablePointer<ifaddrs>? = first
         while let cur = ptr {
             defer { ptr = cur.pointee.ifa_next }
+            guard let name = cur.pointee.ifa_name, let addr = cur.pointee.ifa_addr,
+                  addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let n = String(cString: name)
+            var host = [Int8](repeating: 0, count: Int(NI_MAXHOST))
             let flags = Int32(truncatingIfNeeded: cur.pointee.ifa_flags)
-            guard let name = cur.pointee.ifa_name,
-                  String(cString: name).hasPrefix("bridge1"),
-                  (flags & IFF_UP) != 0, (flags & IFF_RUNNING) != 0
-            else { continue }
-            return true
+            guard getnameinfo(addr, socklen_t(MemoryLayout<sockaddr_in>.size), &host, socklen_t(host.count),
+                              nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            var mask = ""
+            if let m = cur.pointee.ifa_netmask, m.pointee.sa_family == UInt8(AF_INET),
+               (flags & IFF_LOOPBACK) == 0 {
+                var mh = [Int8](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(m, socklen_t(MemoryLayout<sockaddr_in>.size), &mh, socklen_t(mh.count),
+                               nil, 0, NI_NUMERICHOST) == 0 { mask = String(cString: mh) }
+            }
+            let ip = String(cString: host)
+            if byName[n] == nil { order.append(n) }
+            if ip.hasPrefix("127.") || n == "lo0" {
+                byName[n] = (flags, ip.isEmpty ? "127.0.0.1" : ip, "")
+                continue
+            }
+            byName[n] = (flags, ip, mask)
         }
-        return false
+        for n in order {
+            guard let v = byName[n] else { continue }
+            let kind: String
+            if v.flags & IFF_LOOPBACK != 0 { kind = "loopback" }
+            else if n.hasPrefix("bridge1") { kind = "thunderbolt-bridge" }
+            else if n.hasPrefix("llw") { kind = "thunderbolt" }
+            else if n.hasPrefix("utun") || n.hasPrefix("ipsec") || n.hasPrefix("ppp") { kind = "vpn" }
+            else if n == "en0" { kind = "wifi" }
+            else if n.hasPrefix("en") { kind = "ethernet" }
+            else { kind = "other" }
+            out.append(NetIface(name: n, ip: v.ip, netmask: v.mask,
+                                up: (v.flags & IFF_UP) != 0, running: (v.flags & IFF_RUNNING) != 0, kind: kind))
+        }
+        return out
     }
 
     public static func hostName() -> String {
