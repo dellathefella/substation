@@ -336,6 +336,46 @@ public actor EngineActor {
 
     // MARK: - Unload / evict
 
+    public func probeHealth(_ e: RunningEngine) async -> Bool {
+        if let (status, _) = try? await client.getText("http://\(e.host):\(e.port)/health", timeout: 3), status < 400 {
+            return true
+        }
+        return false
+    }
+
+    public func respawn(_ e: RunningEngine, cfg: ConfigSnapshot) async -> Bool {
+        guard let model = cfg.model(e.model) else {
+            await events.publish("engine.heal_failed", [
+                ("model", .string(e.model)), ("node", .string(e.node)), ("error", .string("model gone from catalog")),
+            ])
+            return false
+        }
+        let key = e.key
+        if e.pid > 0 { kill(e.pid, SIGTERM) }
+        else if let n = cfg.node(e.node) {
+            _ = try? await client.json(
+                method: "POST", url: "http://\(n.host):\(n.agentPort)/api/node/runner/kill",
+                body: .object(["model": .string(e.model)]), bearer: cfg.authToken, timeout: 15
+            )
+        }
+        engines.removeValue(forKey: key)
+        slotUtil.removeValue(forKey: key)
+        lastMetrics.removeValue(forKey: key)
+        usedPorts.remove(e.port)
+        do {
+            _ = try await ensureLoaded(model, placement: Placement.parse(e.placement), cfg: cfg)
+            await events.publish("engine.healed", [
+                ("model", .string(e.model)), ("node", .string(e.node)), ("reason", .string("respawned")),
+            ])
+            return true
+        } catch {
+            await events.publish("engine.heal_failed", [
+                ("model", .string(e.model)), ("node", .string(e.node)), ("error", .string("\(error)")),
+            ])
+            return false
+        }
+    }
+
     public func unload(model: String) async {
         for (key, e) in engines where e.model == model {
             engines.removeValue(forKey: key)

@@ -1,5 +1,6 @@
 
 [cluster]
+auto_heal = true
 controller_id = "local"
 enabled = false
 heartbeat_ms = 2000.0
@@ -27,6 +28,10 @@ event_ring_size = 2000.0
 sample_interval_ms = 1000.0
 ws_tick_batch_ms = 250.0
 
+[node]
+agent_port = 8801.0
+rpc_port = 50052.0
+
 [orchestrator]
 cache_enabled = true
 cache_max_entries = 256.0
@@ -47,7 +52,7 @@ models = ["qwen2.5-7b"]
 models = ["qwen2.5-1.5b"]
 
 [orchestrator.tiers.smart]
-models = ["qwen2.5-7b"]
+models = ["m3-ultra-flash"]
 
 [[models]]
 ctx = 4096.0
@@ -64,3 +69,11 @@ name = "qwen2.5-7b"
 placement = "local"
 size_gb = 4.7
 tier = "balanced"
+
+[[models]]
+base_url = "http://192.168.7.248:8083"
+kind = "external"
+model = "qwen3.8-flash-next"
+name = "m3-ultra-flash"
+protocol = "openai"
+tier = "smart"

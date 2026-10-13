@@ -463,6 +463,36 @@ public enum Routes {
             ]))
         }
 
+        // Controller-side RPC worker control: self, or proxied to one joined node.
+        app.on(.POST, "api", "cluster", "rpc-self", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let body = (try? await Routes.jsonBody(req)) ?? .object([:])
+            let start = body["start"]?.boolValue ?? true
+            let up: Bool
+            if start { up = await kit.engines.startRPCSelf(await kit.cfg.snapshot) }
+            else { await kit.engines.stopRPCSelf(); up = false }
+            return jsonResponse(.object(["rpc_up": .bool(up)]), status: up ? .ok : .serviceUnavailable)
+        }
+
+        app.on(.POST, "api", "cluster", "rpc-peer", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let body = try await Routes.jsonBody(req)
+            let nodeId = body["node_id"]?.stringValue ?? ""
+            let start = body["start"]?.boolValue ?? true
+            guard let n = await kit.nodes.node(nodeId) else {
+                return jsonResponse(.object(["error": .object(["message": .string("node \(nodeId) not joined"), "code": .string("not_found")])]), status: .notFound)
+            }
+            let cfg = await kit.cfg.snapshot
+            let url = "http://\(n.ip):\(n.agentPort)/api/node/rpc/\(start ? "start" : "stop")"
+            guard let (status, val) = try? await kit.client.json(method: "POST", url: url, body: .object([:]), bearer: cfg.authToken, timeout: 15), status < 400 else {
+                return jsonResponse(.object(["error": .object(["message": .string("peer \(nodeId) refused rpc/\(start ? "start" : "stop")"), "code": .string("peer_failed")])]), status: .badGateway)
+            }
+            try? await kit.events.publish("cluster.rpc", .object([
+                "node": .string(nodeId), "start": .bool(start),
+            ]))
+            return jsonResponse(val ?? .object(["rpc_up": .bool(start)]))
+        }
+
         // Unjoin a single node (?node=id) or the whole cluster (no param).
         app.on(.POST, "api", "cluster", "unjoin") { req async throws -> Response in
             try await auth(req, kit)

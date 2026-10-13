@@ -203,4 +203,7 @@ export const api = {
   rotateKey: (): Promise<AdminResult> => post('/api/admin/rotate-key'),
   resetConfig: (): Promise<AdminResult> => post('/api/admin/reset-config'),
   tuneApply: (): Promise<AdminResult> => post('/api/tune/apply'),
+  unjoin: (node: string): Promise<AdminResult> => post(`/api/cluster/unjoin?node=${encodeURIComponent(node)}`),
+  rpcSelf: (start: boolean): Promise<AdminResult> => post('/api/cluster/rpc-self', { start: start }),
+  rpcPeer: (nodeId: string, start: boolean): Promise<AdminResult> => post('/api/cluster/rpc-peer', { node_id: nodeId, start: start }),
 };

@@ -15,6 +15,7 @@ public enum ConfigDefaults {
     enabled = false
     controller_id = "local"
     heartbeat_ms = 2000
+    auto_heal = true
 
     [orchestrator]
     # Auto-router: triage model classifies each request into fast/balanced/smart.

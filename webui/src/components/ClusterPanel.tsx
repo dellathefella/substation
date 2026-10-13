@@ -11,7 +11,13 @@ function linkTone(kind: string | undefined): 'ok' | 'info' | 'muted' {
   return 'muted';
 }
 
-function NodeCard(props: { node: NodeHealth; peer: DiscoveryPeer | undefined; now: number }): React.JSX.Element {
+function NodeCard(props: {
+  node: NodeHealth;
+  peer: DiscoveryPeer | undefined;
+  now: number;
+  rpcBusy?: boolean;
+  onRpc?: (id: string, start: boolean) => Promise<void>;
+}): React.JSX.Element {
   const { node, peer } = props;
   const age = props.now - node.ts;
   const stale = age > 10_000;
@@ -28,6 +34,11 @@ function NodeCard(props: { node: NodeHealth; peer: DiscoveryPeer | undefined; no
         <Pill tone={stale ? 'warn' : 'ok'} title={`last heartbeat ${fmtAgo(age)} ago`}>
           ♥ {fmtAgo(age)}
         </Pill>
+        {props.onRpc ? (
+          <button className="btn btn-sm nc-rpc" disabled={props.rpcBusy} onClick={() => void props.onRpc?.(node.node, node.rpc_up === false)}>
+            {node.rpc_up === false ? 'RPC ▶' : 'RPC ⏹'}
+          </button>
+        ) : null}
       </div>
       <div className="nc-ram">
         <div className="kv-row">
@@ -105,6 +116,15 @@ export function ClusterPanel(): React.JSX.Element {
     }
   };
 
+  const [rpcBusy, setRpcBusy] = useState(false);
+  const rpcPeer = async (id: string, start: boolean): Promise<void> => {
+    setRpcBusy(true);
+    const res = await api.rpcPeer(id, start);
+    setRpcBusy(false);
+    if (res.ok) pushToast('success', `rpc/${start ? 'start' : 'stop'} on ${id}`, 'worker acknowledged');
+    else pushToast('error', `rpc toggle failed on ${id}`, String(res.status || 'daemon unreachable'));
+  };
+
   const peerFor = (node: string): DiscoveryPeer | undefined =>
     discovery.find((p) => p.node_id === node || p.name === node);
 
@@ -157,7 +177,11 @@ export function ClusterPanel(): React.JSX.Element {
           {nodeList.length === 0 ? (
             <Empty text="no nodes reporting yet — waiting for node.health…" />
           ) : (
-            <div className="node-grid">{nodeList.map((n) => <NodeCard key={n.node} node={n} peer={peerFor(n.node)} now={now} />)}</div>
+            <div className="node-grid">
+              {nodeList.map((n) => (
+                <NodeCard key={n.node} node={n} peer={peerFor(n.node)} now={now} rpcBusy={rpcBusy} onRpc={rpcPeer} />
+              ))}
+            </div>
           )}
           <div className="discovery-block">
             <div className="kv-head">

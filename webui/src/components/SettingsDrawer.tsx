@@ -7,7 +7,7 @@ import type { ConfigPatch, RuntimeConfig } from '../types.js';
 interface Field {
   path: string;
   label: string;
-  type: 'number' | 'bool';
+  type: 'number' | 'bool' | 'text';
   step?: number;
   min?: number;
   hint?: string;
@@ -39,6 +39,11 @@ const SECTIONS: { title: string; fields: readonly Field[] }[] = [
       { path: 'daemon.session_stick_seconds', label: 'Session stickiness', type: 'number', hint: 's' },
       { path: 'daemon.max_concurrent_requests', label: 'Max concurrent requests', type: 'number', min: 1 },
       { path: 'cluster.enabled', label: 'Clustering enabled', type: 'bool' },
+      { path: 'cluster.controller_id', label: 'Controller id', type: 'text' },
+      { path: 'cluster.heartbeat_ms', label: 'Heartbeat interval', type: 'number', hint: 'ms' },
+      { path: 'cluster.auto_heal', label: 'Auto-heal (restart dead engines + rpc workers)', type: 'bool' },
+      { path: 'node.agent_port', label: 'My agent port', type: 'number' },
+      { path: 'node.rpc_port', label: 'My RPC port', type: 'number' },
     ],
   },
 ];
@@ -81,6 +86,10 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
   const [jsonErr, setJsonErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [nodesDraft, setNodesDraft] = useState<Record<string, { host: string; agent_port: string; rpc_port: string }>>({});
+  const [joinCode, setJoinCode] = useState<string | null>(null);
+  const [rpcUp, setRpcUp] = useState<boolean | null>(null);
+
 
   useEffect(() => {
     if (!props.open) return;
@@ -97,6 +106,9 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     setJsonText(JSON.stringify(config ?? {}, null, 2));
     setJsonErr(null);
     setProfiles((config?.models ?? []).map((m) => ({ ...m })));
+    const rawNodes = ((config as Record<string, unknown> | null)?.nodes ?? {}) as Record<string, { host?: string; agent_port?: number; rpc_port?: number }>;
+    setNodesDraft(Object.fromEntries(Object.entries(rawNodes).map(([id, n]) => [id, { host: n.host ?? '', agent_port: String(n.agent_port ?? 8801), rpc_port: String(n.rpc_port ?? 50052) }])));
+    setRpcUp((config as Record<string, unknown> | null)?.cluster != null ? true : null);
     const t: Record<string, string> = {};
     for (const tier of TIERS) t[tier] = config?.orchestrator?.tiers?.[tier]?.models?.[0] ?? '';
     setTiers(t);
@@ -118,6 +130,9 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
         if (raw === undefined || raw === '') continue;
         if (f.type === 'bool') {
           setPath(patch, f.path, raw === true);
+          count += 1;
+        } else if (f.type === 'text') {
+          setPath(patch, f.path, String(raw));
           count += 1;
         } else {
           const n = Number(raw);
@@ -281,6 +296,22 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
                   <input type="text" placeholder="--no-mmap --flash-attn" value={(p.flags ?? []).join(' ')} onChange={(e) => upd(i, { flags: e.target.value.split(/\s+/).filter(Boolean) })} />
                 </label>
               </div>
+              {placementOf(p) === 'split' ? (
+                <label className="field">
+                  <span className="field-label">
+                    split workers <span className="field-hint">blank = all joined + healthy</span>
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="local studio0 studio1"
+                    value={(p.placement ?? '').startsWith('split:') ? (p.placement ?? '').slice(6).split('+').join(' ') : ''}
+                    onChange={(e) => {
+                      const ids = e.target.value.split(/[\s,]+/).filter(Boolean);
+                      upd(i, { placement: ids.length > 0 ? `split:${ids.join('+')}` : 'split' });
+                    }}
+                  />
+                </label>
+              ) : null}
               <div className="prof-note">
                 Non-RPC local profiles live on exactly one node. A <code>split</code> profile streams weights over GGML RPC to
                 every eligible joined node with worker-side weight caching disabled.
@@ -337,6 +368,71 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
     </div>
   );
 
+  const updn = (id: string, key: 'host' | 'agent_port' | 'rpc_port', v: string): void =>
+    setNodesDraft((ns) => ({ ...ns, [id]: { ...(ns[id] ?? { host: '', agent_port: '8801', rpc_port: '50052' }), [key]: v } }));
+
+  const addNode = (): void =>
+    setNodesDraft((ns) => {
+      let id = 'studio-new';
+      let i = 2;
+      while (ns[id] !== undefined) id = `studio-${i++}`;
+      return { ...ns, [id]: { host: '', agent_port: '8801', rpc_port: '50052' } };
+    });
+
+  const saveNodes = async (): Promise<void> => {
+    const nodes: Record<string, unknown> = {};
+    for (const [id, n] of Object.entries(nodesDraft)) {
+      if (!n.host) continue;
+      nodes[id] = { host: n.host, agent_port: Number(n.agent_port) || 8801, rpc_port: Number(n.rpc_port) || 50052 };
+    }
+    setSaving(true);
+    const res = await api.putConfig({ nodes } as unknown as ConfigPatch);
+    setSaving(false);
+    if (res.ok) {
+      replaceConfig(await api.getConfig());
+      pushToast('success', 'Nodes saved', '[nodes] table updated + persisted to TOML');
+    } else {
+      pushToast('error', 'Nodes save failed', String(res.status));
+    }
+  };
+
+  const removeNode = async (id: string): Promise<void> => {
+    const res = await api.unjoin(id);
+    setNodesDraft((ns) => {
+      const c = { ...ns };
+      delete c[id];
+      return c;
+    });
+    replaceConfig(await api.getConfig());
+    if (res.ok) pushToast('success', `Node ${id} unjoined`);
+    else pushToast('error', `Unjoin ${id} failed`, String(res.status));
+  };
+
+  const genCode = async (): Promise<void> => {
+    setBusy('join');
+    const res = await api.joinCode();
+    setBusy(null);
+    if (res.ok) {
+      const b = res.body as { code?: string };
+      setJoinCode(b?.code ?? null);
+    } else {
+      pushToast('error', 'Join code failed', String(res.status));
+    }
+  };
+
+  const rpcSelfToggle = async (): Promise<void> => {
+    setBusy('rpc');
+    const res = await api.rpcSelf(!(rpcUp ?? true));
+    setBusy(null);
+    if (res.ok) {
+      const b = res.body as { rpc_up?: boolean };
+      setRpcUp(b?.rpc_up ?? null);
+      pushToast('success', `RPC worker ${b?.rpc_up ? 'started' : 'stopped'}`);
+    } else {
+      pushToast('error', 'RPC worker toggle failed', String(res.status));
+    }
+  };
+
   const act = async (kind: 'tune' | 'rotate' | 'reset'): Promise<void> => {
     if (kind === 'reset' && !window.confirm('Reset config to factory defaults? This disables auth and restores the template model catalog.')) return;
     setBusy(kind);
@@ -375,6 +471,8 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
         </span>
         {f.type === 'bool' ? (
           <input type="checkbox" checked={raw === true} onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.checked }))} />
+        ) : f.type === 'text' ? (
+          <input type="text" value={typeof raw === 'string' ? raw : ''} onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))} />
         ) : (
           <input
             type="number"
@@ -440,6 +538,39 @@ export function SettingsDrawer(props: { open: boolean; onClose: () => void }): R
               {s.fields.map(field)}
             </div>
           ))}
+          <div className="drawer-section">
+            <div className="drawer-section-title">Cluster nodes — [nodes] table</div>
+            {Object.entries(nodesDraft).map(([id, n]) => (
+              <div className="node-row" key={id}>
+                <span className="node-id">{id}</span>
+                <input className="prof-name" placeholder="host / ip" value={n.host} onChange={(e) => updn(id, 'host', e.target.value)} />
+                <input className="prof-name node-port" type="number" title="agent port" value={n.agent_port} onChange={(e) => updn(id, 'agent_port', e.target.value)} />
+                <input className="prof-name node-port" type="number" title="rpc port" value={n.rpc_port} onChange={(e) => updn(id, 'rpc_port', e.target.value)} />
+                <button type="button" className="banner-x" aria-label={`Remove ${id}`} onClick={() => void removeNode(id)}>✕</button>
+              </div>
+            ))}
+            <div className="prof-actions">
+              <button type="button" className="btn" onClick={addNode}>+ Add node</button>
+              <button type="button" className="btn btn-primary" onClick={() => void saveNodes()} disabled={saving}>Save nodes</button>
+            </div>
+            <div className="prof-note">
+              host/ports must match the peer’s own [node] table. ✕ unjoins (forgets + removes from TOML); rejoin via a fresh code.
+            </div>
+          </div>
+          <div className="drawer-section">
+            <div className="drawer-section-title">RPC & join</div>
+            <div className="prof-actions">
+              <button type="button" className="btn" onClick={() => void genCode()} disabled={busy !== null}>⚡ New join code</button>
+              <button type="button" className="btn" onClick={() => void rpcSelfToggle()} disabled={busy !== null}>
+                {busy === 'rpc' ? 'Working…' : rpcUp === false ? '▶ RPC worker: start (this Mac)' : '⏹ RPC worker: stop (this Mac)'}
+              </button>
+            </div>
+            {joinCode ? (
+              <div className="code-box" role="button" onClick={() => void navigator.clipboard?.writeText(joinCode).then(() => pushToast('success', 'Join code copied'))}>
+                <code>{joinCode}</code> <span className="dim">· click to copy · enter on the peer within 10 min</span>
+              </div>
+            ) : null}
+          </div>
           <div className="drawer-section">
             <div className="drawer-section-title">Client API key (this browser)</div>
             <label className="field">

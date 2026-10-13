@@ -105,6 +105,7 @@ if role == "node" {
     await engines.startLoops(cfg: snapshot, cfgStore: cfg)
     startHeartbeat(kit)
     startLinkProbeLoop(kit)
+    startHealLoop(kit)
     startBeaconListener(kit)
     NSLog("substationd controller listening on http://\(snapshot.bind):\(port)")
 }
@@ -149,6 +150,58 @@ func startLinkProbeLoop(_ kit: Kit) {
                     probeMB: cfg.probeBytesMB, cfg: cfg, events: kit.events, client: kit.client
                 )
                 await kit.nodes.setLink(id: n.id, link: link)
+            }
+        }
+    }
+}
+
+/// Engine crash-restart + cluster auto-heal. Every 10 s: probe every live engine's
+/// /health; two consecutive failures → respawn same placement. Cluster side: track
+/// down→up transitions; on recovery restart the node's ggml-rpc worker and re-probe
+/// the link (split models resume without manual intervention).
+func startHealLoop(_ kit: Kit) {
+    Task.detached(priority: .background) {
+        var fails: [String: Int] = [:]
+        var down: [String: Bool] = [:]
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(10))
+            let cfg = await kit.cfg.snapshot
+            for e in await kit.engines.listLive() {
+                if await kit.engines.probeHealth(e) {
+                    if fails[e.key] != nil { fails[e.key] = 0 }
+                    continue
+                }
+                let n = (fails[e.key] ?? 0) + 1
+                fails[e.key] = n
+                if n >= 2 {
+                    fails[e.key] = 0
+                    await kit.engines.respawn(e, cfg: cfg)
+                }
+            }
+            guard cfg.clusterEnabled, cfg.autoHeal else { continue }
+            for node in await kit.nodes.allNodes() {
+                let healthy = await kit.nodes.node(node.id)?.healthy ?? false
+                let wasDown = down[node.id] ?? false
+                if healthy && wasDown {
+                    down[node.id] = false
+                    _ = try? await kit.client.json(
+                        method: "POST", url: "http://\(node.ip):\(node.agentPort)/api/node/rpc/start",
+                        body: .object([:]), bearer: cfg.authToken, timeout: 15
+                    )
+                    let link = await LinkProbe.probe(
+                        host: node.ip, agentPort: node.agentPort,
+                        probeMB: cfg.probeBytesMB, cfg: cfg, events: kit.events, client: kit.client
+                    )
+                    await kit.nodes.setLink(id: node.id, link: link)
+                    await kit.events.publish("cluster.healed", .object([
+                        "node": .string(node.id), "link": link,
+                    ]))
+                } else if !healthy && !wasDown {
+                    down[node.id] = true
+                    await kit.events.publish("cluster.warning", .object([
+                        "node": .string(node.id), "reason": .string("node_unreachable"),
+                    ]))
+                }
             }
         }
     }
