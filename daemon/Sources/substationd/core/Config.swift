@@ -96,7 +96,14 @@ public struct ConfigSnapshot: Sendable {
             if let dir, let file {
                 gguf = dir + "/" + file
             } else if let rawGguf {
-                gguf = rawGguf.starts(with: "/") ? Self.expandPath(rawGguf) : modelsDir + "/" + Self.expandPath(rawGguf)
+                let expanded = Self.expandPath(rawGguf)
+                if expanded.hasPrefix("/") {
+                    gguf = expanded
+                } else if FileManager.default.fileExists(atPath: expanded) {
+                    gguf = expanded  // already resolvable relative to cwd
+                } else {
+                    gguf = modelsDir + "/" + expanded
+                }
             } else if let dir {
                 gguf = dir + "/" + name + ".gguf"
             } else {

@@ -94,21 +94,23 @@ public enum Tuner {
             && $0.sizeGB >= fastGB && $0.sizeGB <= max(smartGB, $0.sizeGB) })
             ?? pool.first(where: { $0.name != smart?.name && $0.name != fast?.name })
 
+        func placementFor(_ m: CatalogModel) -> String {
+            fitsLocal(m) ? "local" : (fitsSplit(m) ? "split:local+" + peers.joined(separator: "+") : "local")
+        }
         var picks: [Pick] = []
         if let fast {
             picks.append(Pick(tier: "fast", model: fast.name, placement: "local", ctx: fast.ctx,
                               totalGB: total(fast), fits: fitsLocal(fast),
-                              reason: "smallest fitting model → lowest-latency tier"))
+                              reason: fitsLocal(fast) ? "smallest model → lowest-latency tier" : "smallest model (does not fit in current free RAM)"))
         }
         if let balanced {
             picks.append(Pick(tier: "balanced", model: balanced.name,
-                              placement: fitsLocal(balanced) ? "local" : "split:local+" + peers.joined(separator: "+"),
-                              ctx: balanced.ctx, totalGB: total(balanced),
+                              placement: placementFor(balanced), ctx: balanced.ctx, totalGB: total(balanced),
                               fits: fitsLocal(balanced) || fitsSplit(balanced),
                               reason: "median-capacity model for general traffic"))
         }
         if let smart {
-            let pl = fitsLocal(smart) ? "local" : "split:local+" + peers.joined(separator: "+")
+            let pl = placementFor(smart)
             let why = fitsLocal(smart)
                 ? "largest model that fits locally"
                 : "largest model; fits only when split across nodes"
