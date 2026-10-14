@@ -401,6 +401,7 @@ public actor EngineActor {
         } else {
             guard let n = cfg.node(node) else { throw EngineError.notFound("node \(node)") }
             let port = nextPort(cfg, remote: true)
+            usedPorts.insert(port)   // reserve immediately so a concurrent spawn can't grab the same port
             let splitWeights: [String] = isSplit
                 ? (model.tensorSplit.isEmpty
                     ? ["1"] + splitPeers.map { _ in "1" }
@@ -422,14 +423,19 @@ public actor EngineActor {
                     bearer: cfg.authToken,
                     timeout: 30
                 )
+            } catch {
+                usedPorts.remove(port)
+                throw error
             }
             if status >= 400 {
+                usedPorts.remove(port)
                 log.error("remote spawn \(model.name) on node \(node) returned HTTP \(status)")
                 throw EngineError.status(status)
             }
             // The node may return an already-running engine on a different port
             // than we requested — always adopt the node's actual port.
             let actualPort = spawned?["port"]?.intValue ?? port
+            if actualPort != port { usedPorts.insert(actualPort) }
             let actualCtx = spawned?["ctx"]?.intValue ?? model.ctx
             log.info("remote spawn \(model.name) on node \(node) ok (adopted port \(actualPort))")
             engine = RunningEngine(
