@@ -11,11 +11,17 @@ Everything runs on your own hardware. No cloud, no per-token billing.
 ## What it does
 
 - **Auto-routing** — every request is triaged and sent to the right model tier
-  (`fast` / `balanced` / `smart`) without you picking a model.
+  (configurable, e.g. `fast` / `smart`) without you picking a model.
 - **Model management** — download, cache, hot-load, and unload GGUF models on demand.
 - **Cluster-aware** — run a controller on one Mac and node agents on others; the
   controller places engines where there is room (RAM/VRAM) and can split layers over
   Thunderbolt RPC.
+- **Continuous batching** — engines run llama.cpp `--parallel N` slots, so
+  concurrent requests are batched in-flight and new ones are admitted as slots free.
+- **Node auto-discovery** — node agents announce over UDP beacons; with a shared
+  `auth_token` and `cluster.auto_discover = true`, the controller auto-joins peers.
+- **Clean shutdown** — the daemon traps SIGTERM/SIGINT and terminates every engine
+  it spawned, so a stopped daemon never leaves GPU-holding `llama-server` orphans.
 - **OpenAI-compatible** — point any OpenAI client at `http://<host>:8800/v1`.
 - **Web console** — live dashboard for engines, models, nodes, memory, and logs.
 - **Menu-bar app** — a single macOS `.app` that bundles and supervises the daemon.
@@ -115,26 +121,69 @@ bundled app). Key sections:
 
 ```toml
 [daemon]
-auth_token = "..."          # API bearer token
-startup_timeout_s = 180     # fail fast if a model won't load
+bind = "0.0.0.0"
+port = 8800
+auth_token = ""            # API bearer token (empty = no auth)
 
-[tiers]
-fast     = ["qwen3.5-35b-a3b"]
-balanced = ["ornith-1.5-35b"]
-smart    = ["qwen3.8-flash-next", "glm-5.3-flash"]
+[cluster]
+enabled = true
+controller_id = "studio0"
+local_enabled = false      # false = control-plane only (compute lives on nodes)
+auto_heal = true
+auto_discover = false      # auto-join discovered peers (needs a non-empty auth_token)
 
-[models.qwen3.5-35b-a3b]
-path = "/path/to/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf"
-ctx  = 262144
+[engines]
+llama_server = "/path/to/llama-server"
+rpc_server   = "/path/to/ggml-rpc-server"
+startup_timeout_s = 180    # fail fast if a model won't load
+base_port = 8940
+idle_evict_seconds = 900
+min_free_ram_gb = 8
+
+[orchestrator]
+enabled = true
+default_model = ""
+triage_gguf = "/path/to/triage.gguf"
+triage_port = 8931
+
+[orchestrator.tiers.fast]
+desc = "Light & quick"
+models = ["qwen3.5-35b-a3b"]
+priority = 0.0
+
+[orchestrator.tiers.smart]
+desc = "Flagship serving"
+models = ["qwen3.8-flash-next"]
+priority = 2.0
+
+[[models]]
+name = "qwen3.8-flash-next"
+gguf = "/path/to/Qwen3.8-Flash-Next-IQ4_NL-00001-of-00002.gguf"
+tier = "smart"
+node = "studio0"
+ctx = 262144
+size_gb = 150
+kv_mb_per_1k_ctx = 24
+flags = ["--flash-attn", "on", "--parallel", "4",
+         "--spec-type", "ngram-cache",
+         "--lookup-cache-dynamic", "/path/to/lookup-dynamic.bin"]
 
 [nodes.studio0]
-host     = "192.168.7.248"     # agent / LAN
+host     = "10.0.2.172"        # orchestration / 10GbE
 rpc_host = "192.168.100.1"     # engine RPC / Thunderbolt
+agent_port = 8801
+rpc_port = 50052
+total_ram_gb = 256
 ```
 
-- **`host`** is where the node agent is reached (LAN).
-- **`rpc_host`** is where engine RPC workers are reached (Thunderbolt), keeping
-  layer-split traffic off the LAN.
+- **`host`** is where the node agent is reached (use the fastest control-plane link,
+  e.g. 10GbE). **`rpc_host`** is where engine RPC workers are reached
+  (Thunderbolt), keeping layer-split traffic off the LAN.
+- **Tiers** are defined under `[orchestrator.tiers.<name>]` with a `models` list;
+  the triage model only ever picks among the configured tier names.
+- **Models** are `[[models]]` array entries. `flags` are appended verbatim to
+  `llama-server` (last flag wins). `parallel_slots` (default 4) feeds the RAM
+  estimate; set `--parallel` in `flags` to control the actual slot count.
 - Keep `ctx` consistent across models in the same family so the KV cache is
   homogeneous and predictable.
 
@@ -152,7 +201,9 @@ substationd --role controller --config controller.toml --data ~/substation-contr
 substationd --role node --config node.toml --data ~/substation-node/state
 ```
 
-The controller discovers nodes from `[nodes.*]` and places engines on them.
+The controller places engines on the nodes in `[nodes.*]`. With
+`cluster.auto_discover = true` and a shared `auth_token`, node agents are also
+discovered automatically over UDP beacons and joined without manual config.
 
 ---
 

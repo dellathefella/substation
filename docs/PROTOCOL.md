@@ -1,7 +1,7 @@
 # Substation Wire Protocol v2 (llama.cpp backend)
 
 Layers:
-- **substationd** (Rust control plane): public OpenAI-compatible API, orchestration
+- **substationd** (Swift/Vapor control plane): public OpenAI-compatible API, orchestration
   (triage → tier → route → schedule), cluster placement, metrics/WebSocket. Serves webui.
 - **llama.cpp engines** (Metal): `llama-server` (one loaded GGUF model per process)
   and `rpc-server` (layer-split worker). Supervised by substationd.
@@ -88,7 +88,7 @@ controller treats the split model like any engine (same /v1 API) — splitting
 is a placement concern, invisible to clients (transparency invariant).
 
 ### triage engine (always resident)
-Small GGUF (default `Qwen2.5-0.5B-Instruct-Q4_K_M`) llama-server on
+Small GGUF (default `Qwen2.5-1.5B-Instruct-Q4_K_M`) llama-server on
 `127.0.0.1:8931`. Controller posts a compact classification prompt with
 `response_format:{"type":"json_object"}`, temp 0, ≤40 tokens; must return
 `{"tier":"fast"|"balanced"|"smart","confidence":0..1,"signals":[...]}` in
@@ -128,15 +128,24 @@ invariant); the DAEMON persists conversations for the desktop app.
 
 - **Discovery**: each node agent multicasts a beacon every 5s to
   `224.0.1.87:8810` (+ 255.255.255.255 broadcast): JSON
-  {magic:"SUBJ", node_id, name, ip, agent_port, version, join_hash}
-  where join_hash = SHA256(join_code + node_id) truncated 16 hex.
+  {magic:"SUBJ", node_id, name, ip, agent_port, version, join_hash, rpc_port, secret_hash}
+  where join_hash = SHA256(join_code + node_id) truncated 16 hex, and
+  secret_hash = SHA256("substation-auto:" + auth_token + node_id) truncated 32 hex
+  (empty when `auth_token` is empty). Decoders tolerate beacons missing the newer
+  fields, so mixed daemon versions still interoperate.
 - Controller lists peers: `GET /api/discovery` → [{node_id,name,ip,agent_port,
-  seen_ms_ago, link:{kind:"thunderbolt"|"ethernet"|"wifi", rtt_ms, mbps, rdma}}].
+  seen_ms_ago, link:{lan_kind:"ethernet"|"wifi"|..., rtt_ms, mbps,
+  tb:{reachable, rtt_ms, mbps}}}]. `tb` is the Thunderbolt (`rpc_host`) probe.
 - **Join code**: `POST /api/admin/join-code` → 6-digit code (controller),
   TTL 10min. Peer joins: `POST /api/cluster/join` {controller_ip, code} (on peer's
   node agent) OR CLI `substationd join --controller <ip> --code 123456` OR UI.
   Controller validates code (constant-time), adds node, starts heartbeat,
   starts rpc-server on both ends (cluster enabled automatically).
+- **Auto-discovery** (`cluster.auto_discover = true` + non-empty `auth_token`):
+  the controller auto-registers any beacon whose `secret_hash` matches
+  SHA256("substation-auto:" + auth_token + node_id), joining that node with no
+  manual join code. Stays disabled while `auth_token` is empty (no shared secret).
+  Emits `{type:"cluster.node_autojoined", data:{node, name, ip}}`.
 - **Thunderbolt plumb-up** (`POST /api/cluster/{node}/plumb-thunderbolt`):
   controller returns the exact `networksetup -setmanual "Thunderbolt Bridge"
   10.99.<n>.1 255.255.255.0` command per node; executes locally for the head

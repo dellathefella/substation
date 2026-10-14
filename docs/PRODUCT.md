@@ -4,8 +4,8 @@ Local-first AI compute: one Mac (or an optional Mac cluster) that **automaticall
 loads and runs the right model for every request, orchestrated by a small
 triage model on the head node, with a web console for real-time insight.
 **Final deliverable: a single macOS app** (`Substation.app`) whose menu bar UI
-bundles and supervises the Rust control-plane daemon (helper binary) and the
-llama.cpp engine binaries.
+bundles and supervises the Swift control-plane daemon (`substationd`, Vapor) and
+the llama.cpp engine binaries.
 
 ## Core: Auto mode
 - A **small head-node model** (triage/orchestrator model, always resident)
@@ -47,7 +47,7 @@ Substation does automatically, and exposes WHY via the dashboard.
 | Real-time metrics web console | v1 | daemon /ws → React dashboard |
 | Optional cluster + **RPC streaming for large models** | v1 | GGML RPC `rpc-server` + `--rpc --tensor-split`; off by default |
 | Model download (small/local) | v1 | HF downloader for catalog GGUFs → models/ |
-| Menu bar mini-monitor | v1 | Substation.app: Swift UI + Rust helper binary |
+| Menu bar mini-monitor | v1 | Substation.app: Swift UI + Swift `substationd` daemon |
 | **Desktop chat app** (chat + model switching) | v1 | SwiftUI window in Substation.app; `auto` chats tagged with real model/node per message; pin/switch tiers per chat |
 | **Auto-discovery + join codes** | v1 | UDP beacon/mDNS on LAN; 6-digit join code; one-click pair two nodes |
 | **Thunderbolt link plumb-up** | v1 | detect bridge0/en1-3, guided + scripted `networksetup -setmanual` both ends, link probe |

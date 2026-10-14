@@ -36,7 +36,7 @@ repo = "..."; file = "...-IQ4_XS-0000*.gguf"   # multi-shard: point -m at shard 
 
 ## Deployment knobs inherited from the Ansible repo (applied by recipe apply)
 ## Engine pin (ships with the app)
-- **Pinned llama.cpp: `b11577` (commit `cbe28bb3cb0758f0c566a9a3561766821aeb0748`)**
+- **Pinned llama.cpp: `b11618` (commit `4dd6dd4b96f32eb53a91d659bbff8b37bbd282b9`)**
   built `-DGGML_METAL=ON -DGGML_RPC=ON`; ships inside Substation.app at
   `Contents/Resources/engine/{llama-server,ggml-rpc-server,libggml-*.dylib}`.
   Version shown in dashboard/menu bar; upgrade = explicit re-pin + rebuild.
