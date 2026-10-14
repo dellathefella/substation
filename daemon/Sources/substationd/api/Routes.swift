@@ -239,12 +239,49 @@ public enum Routes {
                     "gpu_footprint_gb": .jDouble((e.gpuFootprintGB * 10).rounded() / 10),
                 ])
             })
-            // GPU wired-memory budget: what's resident vs the Metal limit.
-            let residentGPU = engines.reduce(0) { $0 + $1.gpuFootprintGB }
+            // GPU wired-memory budget: per-node + global across the cluster.
+            // Each node reports its own wired limit in health; we sum resident
+            // engine footprints per node. The controller's own machine is
+            // folded into the co-located node agent (same IP) so it's never
+            // double-counted.
+            let localIP = HostInfo.primaryIP()
+            let healthyNodes = (await kit.nodes.allNodes()).filter { $0.healthy }
+            let localCovered = healthyNodes.contains { $0.ip == localIP }
+            let localResident = engines.filter { $0.node == "local" }.reduce(0.0) { $0 + $1.gpuFootprintGB }
+            var perNode: [JSONValue] = []
+            var clusterLimit = 0.0
+            var clusterResident = 0.0
+            // The controller's own machine as a GPU line only when no node
+            // agent already represents it.
+            if !localCovered {
+                clusterLimit += gpuLimit
+                clusterResident += localResident
+                perNode.append(.object([
+                    "node": .string("local"),
+                    "wired_limit_gb": .jDouble((gpuLimit * 10).rounded() / 10),
+                    "resident_gb": .jDouble((localResident * 10).rounded() / 10),
+                    "headroom_gb": .jDouble(((gpuLimit - localResident) * 10).rounded() / 10),
+                ]))
+            }
+            for n in healthyNodes {
+                let nodeLimit = n.lastHealth?["gpu_wired_limit_gb"]?.doubleValue
+                    ?? (n.lastHealth?["ram_total_gb"]?.doubleValue ?? 0) * 0.75
+                var nodeResident = engines.filter { $0.node == n.id }.reduce(0.0) { $0 + $1.gpuFootprintGB }
+                if n.ip == localIP { nodeResident += localResident }   // fold controller-local engines in
+                clusterLimit += nodeLimit
+                clusterResident += nodeResident
+                perNode.append(.object([
+                    "node": .string(n.id),
+                    "wired_limit_gb": .jDouble((nodeLimit * 10).rounded() / 10),
+                    "resident_gb": .jDouble((nodeResident * 10).rounded() / 10),
+                    "headroom_gb": .jDouble(((nodeLimit - nodeResident) * 10).rounded() / 10),
+                ]))
+            }
             obj["gpu_budget"] = .object([
-                "wired_limit_gb": .jDouble((gpuLimit * 10).rounded() / 10),
-                "resident_gb": .jDouble((residentGPU * 10).rounded() / 10),
-                "headroom_gb": .jDouble(((gpuLimit - residentGPU) * 10).rounded() / 10),
+                "wired_limit_gb": .jDouble((clusterLimit * 10).rounded() / 10),
+                "resident_gb": .jDouble((clusterResident * 10).rounded() / 10),
+                "headroom_gb": .jDouble(((clusterLimit - clusterResident) * 10).rounded() / 10),
+                "per_node": .array(perNode),
             ])
             // Same-model load-balancing view (replicas per model).
             obj["replicas"] = await kit.engines.replicaStatus(cfg: cfg)

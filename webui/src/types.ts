@@ -115,7 +115,12 @@ export interface DaemonStatus {
     weights_gb?: number;
     gpu_footprint_gb?: number;
   }>;
-  gpu_budget?: { wired_limit_gb: number; resident_gb: number; headroom_gb: number };
+  gpu_budget?: {
+    wired_limit_gb: number;
+    resident_gb: number;
+    headroom_gb: number;
+    per_node?: Array<{ node: string; wired_limit_gb: number; resident_gb: number; headroom_gb: number }>;
+  };
   replicas?: Array<{
     model: string;
     replicas_loaded: number;

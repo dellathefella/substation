@@ -272,18 +272,39 @@ export function ClusterStatus(): React.JSX.Element {
         </div>
       ))}
       {st?.gpu_budget ? (
-        <div className="gpu-budget" title="Metal GPU wired-memory budget across all resident models" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 10px' }}>
-          <span className="dim" style={{ minWidth: 28 }}>GPU</span>
-          <div style={{ flex: 1, height: 8, background: '#232b3a', borderRadius: 4, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%',
-              width: `${Math.min(100, (st.gpu_budget.resident_gb / Math.max(1, st.gpu_budget.wired_limit_gb)) * 100)}%`,
-              background: st.gpu_budget.headroom_gb < 8 ? '#e5534b' : st.gpu_budget.headroom_gb < 24 ? '#d99a2b' : '#3fb950',
-            }} />
+        <div className="gpu-budget" style={{ margin: '4px 0 10px' }}>
+          <div title="Cluster-wide Metal GPU wired-memory budget" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="dim" style={{ minWidth: 64 }}>GPU cluster</span>
+            <div style={{ flex: 1, height: 8, background: '#232b3a', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.min(100, (st.gpu_budget.resident_gb / Math.max(1, st.gpu_budget.wired_limit_gb)) * 100)}%`,
+                background: st.gpu_budget.headroom_gb < 8 ? '#e5534b' : st.gpu_budget.headroom_gb < 24 ? '#d99a2b' : '#3fb950',
+              }} />
+            </div>
+            <span className="dim" style={{ whiteSpace: 'nowrap' }}>
+              {st.gpu_budget.resident_gb.toFixed(0)} / {st.gpu_budget.wired_limit_gb.toFixed(0)} GB · headroom {st.gpu_budget.headroom_gb.toFixed(0)} GB
+            </span>
           </div>
-          <span className="dim" style={{ whiteSpace: 'nowrap' }}>
-            {st.gpu_budget.resident_gb.toFixed(0)} / {st.gpu_budget.wired_limit_gb.toFixed(0)} GB · headroom {st.gpu_budget.headroom_gb.toFixed(0)} GB
-          </span>
+          {st.gpu_budget.per_node && st.gpu_budget.per_node.length > 1 ? (
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {st.gpu_budget.per_node.map((n) => (
+                <div key={n.node} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="dim mono" style={{ minWidth: 64, fontSize: 11 }}>{n.node}</span>
+                  <div style={{ flex: 1, height: 5, background: '#232b3a', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${Math.min(100, (n.resident_gb / Math.max(1, n.wired_limit_gb)) * 100)}%`,
+                      background: n.headroom_gb < 8 ? '#e5534b' : n.headroom_gb < 24 ? '#d99a2b' : '#3fb950',
+                    }} />
+                  </div>
+                  <span className="dim" style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
+                    {n.resident_gb.toFixed(0)}/{n.wired_limit_gb.toFixed(0)} · {n.headroom_gb.toFixed(0)} free
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {st?.catalog_reconciliation && st.catalog_reconciliation.unservable.length > 0 ? (
