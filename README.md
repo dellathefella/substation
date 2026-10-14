@@ -164,6 +164,9 @@ node = "studio0"
 ctx = 262144
 size_gb = 150
 kv_mb_per_1k_ctx = 24
+cache_reuse = 256        # llama.cpp --cache-reuse (min prefix tokens reused)
+cache_ram_mib = 8192     # llama.cpp --cache-ram (unified KV pool; -1 = no limit)
+cache_idle_slots = true  # llama.cpp --cache-idle-slots (retain idle-slot KV)
 flags = ["--flash-attn", "on", "--parallel", "4",
          "--spec-type", "ngram-cache",
          "--lookup-cache-dynamic", "/path/to/lookup-dynamic.bin"]
@@ -184,6 +187,12 @@ total_ram_gb = 256
 - **Models** are `[[models]]` array entries. `flags` are appended verbatim to
   `llama-server` (last flag wins). `parallel_slots` (default 4) feeds the RAM
   estimate; set `--parallel` in `flags` to control the actual slot count.
+- **Caching** has two layers that both survive a model switching out and back in:
+  the daemon **response cache** is bucketed **per model** (exact-match repeats are
+  served instantly, and one model's traffic never evicts another's), and the
+  engine's **unified KV cache** (`cache_ram_mib` + `cache_idle_slots`) retains
+  prompt KV across requests/slots for prefix reuse. `cache_reuse` sets the minimum
+  reusable prefix chunk.
 - Keep `ctx` consistent across models in the same family so the KV cache is
   homogeneous and predictable.
 

@@ -1,9 +1,17 @@
 import Foundation
 
 /// Daemon-side LRU response cache for non-streaming completions.
+///
+/// Bucketed PER MODEL: each model gets its own LRU, so heavy traffic on one model
+/// (or a model switching in/out) never evicts another model's cached responses.
+/// This is what makes the cache useful when the orchestrator swaps models on the
+/// fly — a model that switches back in still has its exact-match responses cached.
 public actor ResponseCache {
-    private var map: [String: String] = [:]
-    private var order: [String] = []
+    private struct Bucket {
+        var map: [String: String] = [:]
+        var order: [String] = []
+    }
+    private var buckets: [String: Bucket] = [:]
     private var hits = 0
     private var misses = 0
     private var lastCanonical: String?
@@ -11,25 +19,28 @@ public actor ResponseCache {
 
     public init() {}
 
-    public func get(_ key: String, enabled: Bool) -> String? {
+    public func get(model: String, key: String, enabled: Bool) -> String? {
         guard enabled else { return nil }
-        if let v = map[key] {
+        if var b = buckets[model], let v = b.map[key] {
             hits += 1
-            order.removeAll { $0 == key }
-            order.append(key)
+            b.order.removeAll { $0 == key }
+            b.order.append(key)
+            buckets[model] = b
             return v
         }
         misses += 1
         return nil
     }
 
-    public func set(_ key: String, _ value: String, maxEntries: Int) {
-        guard map[key] == nil else { return }
-        map[key] = value
-        order.append(key)
-        while order.count > max(1, maxEntries) {
-            map.removeValue(forKey: order.removeFirst())
+    public func set(model: String, key: String, _ value: String, maxEntries: Int) {
+        var b = buckets[model] ?? Bucket()
+        guard b.map[key] == nil else { return }
+        b.map[key] = value
+        b.order.append(key)
+        while b.order.count > max(1, maxEntries) {
+            b.map.removeValue(forKey: b.order.removeFirst())
         }
+        buckets[model] = b
     }
 
     /// Track prefix reuse between consecutive canonical prompts (heuristic
@@ -51,10 +62,12 @@ public actor ResponseCache {
         let total = hits + misses
         let ratio = total == 0 ? 0.0 : Double(hits) / Double(total)
         let depth = prefixDepths.isEmpty ? 0.0 : Double(prefixDepths.reduce(0, +)) / Double(prefixDepths.count)
+        let entries = buckets.values.reduce(0) { $0 + $1.order.count }
         return .object([
             "enabled": .bool(enabled),
-            "entries": .jInt(order.count),
+            "entries": .jInt(entries),
             "max_entries": .jInt(maxEntries),
+            "models_cached": .jInt(buckets.count),
             "hit_ratio": .jDouble((ratio * 1000).rounded() / 1000),
             "prefix_reuse_estimate": .jDouble((depth / 1000).rounded() / 1000),
             "slot_util": .object(slotUtil),

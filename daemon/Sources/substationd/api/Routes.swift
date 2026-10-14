@@ -742,13 +742,18 @@ public enum Routes {
         app.get("api", "cluster", "logs") { req async throws -> Response in
             try await auth(req, kit)
             guard let nodeId = req.query[String.self, at: "node"],
-                  let name = req.query[String.self, at: "name"],
                   let n = await kit.nodes.node(nodeId) else {
-                return jsonResponse(.object(["error": .object(["message": .string("node/name required"), "code": .string("bad_request")])]), status: .badRequest)
+                return jsonResponse(.object(["error": .object(["message": .string("node required"), "code": .string("bad_request")])]), status: .badRequest)
             }
-            let tail = req.query[Int.self, at: "tail"] ?? 300
             let cfg = await kit.cfg.snapshot
-            let url = "http://\(n.ip):\(n.agentPort)/api/node/logs?name=\(name)&tail=\(tail)"
+            // With ?name=… → tail that file; without → list the node's log files.
+            let url: String
+            if let name = req.query[String.self, at: "name"], !name.isEmpty {
+                let tail = req.query[Int.self, at: "tail"] ?? 300
+                url = "http://\(n.ip):\(n.agentPort)/api/node/logs?name=\(name)&tail=\(tail)"
+            } else {
+                url = "http://\(n.ip):\(n.agentPort)/api/node/logs"
+            }
             guard let (status, val) = try? await kit.client.json(method: "GET", url: url, bearer: cfg.authToken, timeout: 10), status < 400 else {
                 return jsonResponse(.object(["error": .object(["message": .string("node \(nodeId) unreachable"), "code": .string("peer_failed")])]), status: .badGateway)
             }

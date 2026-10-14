@@ -233,6 +233,8 @@ export const api = {
     get(`/api/logs/${encodeURIComponent(name)}?tail=${tail}`),
   nodeLogs: (node: string, name: string, tail: number): Promise<AdminResult> =>
     get(`/api/cluster/logs?node=${encodeURIComponent(node)}&name=${encodeURIComponent(name)}&tail=${tail}`),
+  nodeLogList: (node: string): Promise<AdminResult> =>
+    get(`/api/cluster/logs?node=${encodeURIComponent(node)}`),
   llamaInfo: (): Promise<LlamaInfo | null> => getJson<LlamaInfo>('/api/llama'),
   llamaUpdate: (): Promise<AdminResult> => post('/api/llama/update', {}),
   hfSearch: (q: string, token: string): Promise<HfRepo[]> => {

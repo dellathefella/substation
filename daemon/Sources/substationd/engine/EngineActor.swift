@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 public struct RunningEngine: Sendable {
     public var model: String
@@ -32,6 +33,8 @@ public enum Placement: Sendable, Hashable {
 
 /// Supervises llama-server engines + the triage engine + optional rpc-server.
 public actor EngineActor {
+    /// Operational log → daemon log file + webui log page (via DaemonLogHandler).
+    private let log = Logger(label: "engine")
     private var engines: [String: RunningEngine] = [:]
     private var usedPorts: Set<Int> = []
     private var lastMetrics: [String: (tokens: Double, seconds: Double)] = [:]
@@ -104,19 +107,26 @@ public actor EngineActor {
         if !name.isEmpty {
             try? FileManager.default.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
             let path = logsDir + "/" + name + ".log"
-            FileManager.default.createFile(atPath: path, contents: nil)
-            outHandle = FileHandle(forWritingAtPath: path)
+            // O_APPEND so the child's writes always land at EOF. This lets the
+            // daemon truncate the file in place (log trimming) without the child's
+            // stale file offset creating a sparse file.
+            let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            if fd >= 0 {
+                outHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            }
         }
         p.standardOutput = outHandle ?? FileHandle.nullDevice
         p.standardError = outHandle ?? FileHandle.nullDevice
         do {
             try p.run()
         } catch {
+            log.error("spawn FAILED name=\(name) exec=\(exec): \(error)")
             return 0
         }
         let pid = p.processIdentifier
         managed[pid] = p
         ChildPids.shared.add(pid)
+        log.info("spawned \(name) pid=\(pid)")
         return pid
     }
 
@@ -147,6 +157,7 @@ public actor EngineActor {
     /// and before a self-restart so we never orphan GPU-holding servers.
     public func shutdownAll() {
         let procs = Array(managed.values)
+        log.info("shutdownAll: terminating \(procs.count) tracked child process(es)")
         for p in procs where p.isRunning { kill(p.processIdentifier, SIGTERM) }
         usleep(500_000)
         for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL) }
@@ -186,6 +197,7 @@ public actor EngineActor {
         if let pid = Self.listenerPid(port: cfg.rpcPort), pid > 0 {
             rpcPid = 0
             rpcAdoptedPid = pid
+            log.info("adopted existing rpc-server pid \(pid) on port \(cfg.rpcPort)")
             await events.publish("rpc.adopted", .object([
                 "port": .jInt(cfg.rpcPort), "pid": .jInt(Int(pid)),
                 "log": .string("logs/rpc-\(cfg.rpcPort).log"),
@@ -266,6 +278,7 @@ public actor EngineActor {
             throw EngineError.notFound("local compute disabled (cluster.local_enabled = false) — use a node placement")
         }
         let key = "\(model.name)@\(node)"
+        log.info("ensureLoaded model=\(model.name) node=\(node) split=\(isSplit) placement=\(model.placement)")
 
         if var existing = engines[key] {
             existing.lastUsed = Date()
@@ -311,10 +324,14 @@ public actor EngineActor {
                 "--host", "127.0.0.1",
                 "--port", String(port),
                 "-c", String(cacheTokens),
-                "--cache-reuse", "256",
+                "--cache-reuse", String(model.cacheReuse),
                 "--parallel", String(max(1, model.slots)),
+                "--cache-ram", String(model.cacheRamMiB),
                 "--metrics",
             ]
+            if model.cacheIdleSlots && model.cacheRamMiB != 0 {
+                args.append("--cache-idle-slots")
+            }
             if isSplit {
                 let rpc = splitPeers.compactMap { peer in
                     cfg.node(peer).map { "\($0.rpcHost):\($0.rpcPort)" }
@@ -337,6 +354,7 @@ public actor EngineActor {
             )
             usedPorts.insert(port)
             do { try await waitReady(engine, cfg: cfg) } catch {
+                log.error("local engine \(model.name) failed to become ready (pid \(pid), port \(port)): \(error) — killing")
                 kill(pid, SIGTERM)
                 usedPorts.remove(port)
                 throw error
@@ -364,10 +382,14 @@ public actor EngineActor {
                     timeout: 30
                 )
             }
-            if status >= 400 { throw EngineError.status(status) }
+            if status >= 400 {
+                log.error("remote spawn \(model.name) on node \(node) returned HTTP \(status)")
+                throw EngineError.status(status)
+            }
             // The node may return an already-running engine on a different port
             // than we requested — always adopt the node's actual port.
             let actualPort = spawned?["port"]?.intValue ?? port
+            log.info("remote spawn \(model.name) on node \(node) ok (adopted port \(actualPort))")
             engine = RunningEngine(
                 model: model.name, node: node, host: n.host, port: actualPort,
                 pid: 0, split: isSplit, rpcPeers: splitPeers, placement: model.placement,
@@ -380,6 +402,7 @@ public actor EngineActor {
         engine.lastUsed = Date()
         engines[engine.key] = engine
         await metrics.increment("models_loaded_total")
+        log.info("loaded \(model.name) on \(node) at \(engine.baseURL) in \(Int(Date().timeIntervalSince(t0) * 1000))ms")
         await events.publish("model.loaded", [
             ("model", .string(model.name)),
             ("node", .string(node)),
@@ -409,10 +432,14 @@ public actor EngineActor {
             "--host", "0.0.0.0",
             "--port", String(port),
             "-c", String(cacheTokens),
-            "--cache-reuse", "256",
+            "--cache-reuse", String(model.cacheReuse),
             "--parallel", String(max(1, model.slots)),
+            "--cache-ram", String(model.cacheRamMiB),
             "--metrics",
         ]
+        if model.cacheIdleSlots && model.cacheRamMiB != 0 {
+            args.append("--cache-idle-slots")
+        }
         if !rpc.isEmpty {
             args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", tensorSplit.joined(separator: ",")]
         }
@@ -510,6 +537,7 @@ public actor EngineActor {
             return false
         }
         let key = e.key
+        log.info("respawn \(e.model) on \(e.node) (heal)")
         if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid); ChildPids.shared.remove(e.pid) }
         else if let n = cfg.node(e.node) {
             _ = try? await client.json(
@@ -538,6 +566,7 @@ public actor EngineActor {
 
     public func unload(model: String) async {
         for (key, e) in engines where e.model == model {
+            log.info("unload \(model) (pid \(e.pid), node \(e.node), port \(e.port))")
             engines.removeValue(forKey: key)
             if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid); ChildPids.shared.remove(e.pid) }
             slotUtil.removeValue(forKey: key)
@@ -636,6 +665,56 @@ public actor EngineActor {
                 _ = client
             }
         }
+        // Periodic log maintenance: trim oversized engine logs and drop stale ones
+        // so a long-lived daemon never fills the drive.
+        Task.detached(priority: .background) {
+            while true {
+                try? await Task.sleep(for: .seconds(60))
+                await self.trimEngineLogs()
+            }
+        }
+    }
+
+    /// Bound engine log files on disk: truncate any engine/rpc log larger than
+    /// `maxBytes` to its last `keepBytes`, and delete stale engine logs older than
+    /// `staleMaxAge`. Engine logs are opened O_APPEND, so in-place truncation is
+    /// safe while the child keeps writing at EOF.
+    private func trimEngineLogs() {
+        let maxBytes = 5_000_000
+        let keepBytes = 2_000_000
+        let staleMaxAge: TimeInterval = 7 * 24 * 3600
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(atPath: logsDir) else { return }
+        let activeNames = Set(engines.values.map { "llama-\($0.model)-\($0.port).log" })
+        for name in items where name.hasPrefix("llama-") || name.hasPrefix("rpc-") {
+            let path = logsDir + "/" + name
+            guard let attrs = try? fm.attributesOfItem(atPath: path),
+                  let size = attrs[.size] as? Int,
+                  let mtime = attrs[.modificationDate] as? Date else { continue }
+            if size > maxBytes {
+                trimTail(path: path, keepBytes: keepBytes)
+                log.info("trimmed oversized log \(name) (\(size / 1_048_576) MB → ~\(keepBytes / 1_048_576) MB)")
+            }
+            if Date().timeIntervalSince(mtime) > staleMaxAge && !activeNames.contains(name) {
+                try? fm.removeItem(atPath: path)
+                log.info("deleted stale log \(name)")
+            }
+        }
+    }
+
+    /// Keep only the last `keepBytes` of a file (truncate in place).
+    private func trimTail(path: String, keepBytes: Int) {
+        guard let fh = FileHandle(forReadingAtPath: path) else { return }
+        let size = fh.seekToEndOfFile()
+        guard size > UInt64(keepBytes) else { fh.closeFile(); return }
+        fh.seek(toFileOffset: size - UInt64(keepBytes))
+        let tail = fh.readDataToEndOfFile()
+        fh.closeFile()
+        let fd = open(path, O_WRONLY | O_TRUNC, 0o644)
+        guard fd >= 0 else { return }
+        let wh = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        wh.write(tail)
+        wh.closeFile()
     }
 
     /// Idle engines get their prompt cache re-sized when memory headroom

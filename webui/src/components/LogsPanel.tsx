@@ -24,10 +24,9 @@ export function LogsPanel(): React.JSX.Element {
   const nodeIds = Object.keys(nodes).sort();
 
   useEffect(() => {
-    if (node !== 'local') return;
     let stop = false;
     const tick = async (): Promise<void> => {
-      const res = await api.logs();
+      const res = node === 'local' ? await api.logs() : await api.nodeLogList(node);
       if (stop || !res.ok) return;
       const body = res.body as { logs?: LogFile[] } | null;
       const list = body?.logs ?? [];
@@ -42,16 +41,7 @@ export function LogsPanel(): React.JSX.Element {
     };
   }, [node]);
 
-  const remoteFiles: LogFile[] =
-    node === 'local'
-      ? []
-      : (nodes[node]?.runners ?? []).map((r) => ({
-          name: `llama-${r.model}-${r.port}.log`,
-          bytes: 0,
-          mtime_ms: 0,
-        }));
-
-  const current = node === 'local' ? files : remoteFiles;
+  const current = files;
 
   useEffect(() => {
     if (!sel) return;

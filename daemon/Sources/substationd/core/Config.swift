@@ -38,6 +38,15 @@ public struct CatalogModel: Sendable, Hashable {
     public var enabled: Bool
     /// --tensor-split weights for split placement (e.g. "1,2"); empty = even.
     public var tensorSplit: String
+    /// llama.cpp `--cache-reuse`: minimum prefix tokens reused from the KV cache.
+    public var cacheReuse: Int
+    /// llama.cpp `--cache-ram` (MiB): the unified KV cache pool that retains
+    /// prompt KV across requests/slots for reuse. -1 = no limit, 0 = disabled.
+    public var cacheRamMiB: Int
+    /// llama.cpp `--cache-idle-slots`: retain KV of idle slots in the unified
+    /// pool so returning sessions reuse their prefix instead of re-prefilling.
+    /// Only emitted when `cacheRamMiB` != 0 (requires the unified KV cache).
+    public var cacheIdleSlots: Bool
 }
 
 public struct NodeStatic: Sendable, Hashable {
@@ -195,7 +204,10 @@ public struct ConfigSnapshot: Sendable {
                 vision: m["vision"]?.boolValue ?? ((m["mmproj"]?.stringValue) != nil),
                 enabled: m["enabled"]?.boolValue ?? true,
                 tensorSplit: (m["tensor_split"]?.stringValue ?? "")
-                    .replacingOccurrences(of: " ", with: "")
+                    .replacingOccurrences(of: " ", with: ""),
+                cacheReuse: m["cache_reuse"]?.intValue ?? 256,
+                cacheRamMiB: m["cache_ram_mib"]?.intValue ?? 8192,
+                cacheIdleSlots: m["cache_idle_slots"]?.boolValue ?? true
             )
         } ?? []
     }

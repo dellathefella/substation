@@ -213,8 +213,12 @@ public enum NodeRoutes {
 
         app.get("api", "node", "logs") { req async throws -> Response in
             try await NodeKit.auth(req, kit)
-            return try LogFiles.sendLog(req, logsDir: kit.engines.logsDir,
-                                        name: req.parameters.get("name") ?? "", tail: req.query[Int.self, at: "tail"])
+            // With ?name=… → tail that file; without → list the node's log files.
+            if let name = req.query[String.self, at: "name"], !name.isEmpty {
+                return try LogFiles.sendLog(req, logsDir: kit.engines.logsDir, name: name,
+                                          tail: req.query[Int.self, at: "tail"])
+            }
+            return jsonResponse(.object(["logs": .array(LogFiles.listLogs(kit.engines.logsDir))]))
         }
 
         // Node's own join-code endpoint (spec §6). Generates a code when none set.

@@ -86,7 +86,7 @@ public struct ChatPipeline: Sendable {
 
         let cfg = await orch.cfg.snapshot
         let key = Self.cacheKey(model: route.model, body: body)
-        if cfg.cacheEnabled, let cached = await orch.cache.get(key, enabled: cfg.cacheEnabled) {
+        if cfg.cacheEnabled, let cached = await orch.cache.get(model: route.model, key: key, enabled: cfg.cacheEnabled) {
             await orch.admission.release()
             await orch.events.publish("cache.hit", [
                 ("id", .string(route.requestId)), ("model", .string(route.model)),
@@ -174,7 +174,7 @@ public struct ChatPipeline: Sendable {
 
         out["model"] = .string(route.virtualModel)
         if cfg.cacheEnabled {
-            await orch.cache.set(key, JSONCoding.encodeString(.object(out)), maxEntries: cfg.cacheMaxEntries)
+            await orch.cache.set(model: route.model, key: key, JSONCoding.encodeString(.object(out)), maxEntries: cfg.cacheMaxEntries)
         }
         return jsonResponse(.object(out), extra: [
             ("X-Substation-Request-Id", route.requestId),
