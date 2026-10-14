@@ -105,6 +105,21 @@ export interface DaemonStatus {
     pressure?: string;
     local_enabled?: boolean;
   };
+  engines?: Array<{
+    model: string;
+    node: string;
+    port: number;
+    split: boolean;
+    rpc_peers: string[];
+    ctx?: number;
+    weights_gb?: number;
+    gpu_footprint_gb?: number;
+  }>;
+  gpu_budget?: { wired_limit_gb: number; resident_gb: number; headroom_gb: number };
+  catalog_reconciliation?: {
+    profiles: Array<{ profile: string; capable_nodes: string[] }>;
+    unservable: string[];
+  };
 }
 
 export interface ModelMetrics {

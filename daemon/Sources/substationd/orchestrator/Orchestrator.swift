@@ -561,7 +561,8 @@ public struct Orchestrator: Sendable {
         return RunningEngine(
             model: m.name, node: "remote", host: RemoteTarget.host(of: base), port: 0,
             pid: 0, split: false, rpcPeers: [], placement: m.kind,
-            loadedAt: now, lastUsed: now, sizeGB: 0, ctx: m.ctx
+            loadedAt: now, lastUsed: now, sizeGB: 0, ctx: m.ctx,
+            kvMBPer1k: m.kvMBPer1k > 0 ? m.kvMBPer1k : 100.0
         )
     }
 

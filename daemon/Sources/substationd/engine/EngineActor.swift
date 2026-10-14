@@ -14,9 +14,19 @@ public struct RunningEngine: Sendable {
     public var lastUsed: Date
     public var sizeGB: Double
     public var ctx: Int
+    /// KV cache MB per 1k tokens (per slot) — lets the GPU-budget guard
+    /// compute this engine's live GPU footprint without a catalog lookup.
+    public var kvMBPer1k: Double
 
     public var key: String { "\(model)@\(node)" }
     public var baseURL: String { "http://\(host):\(port)" }
+
+    /// Approximate GPU (Metal wired) footprint: weights + KV + a fixed
+    /// runtime overhead. `ctx` is the total KV tokens handed to the server.
+    public var gpuFootprintGB: Double {
+        let kvGB = (Double(ctx) / 1024.0) * kvMBPer1k / 1024.0
+        return sizeGB + kvGB + 1.0
+    }
 }
 
 public enum Placement: Sendable, Hashable {
@@ -286,7 +296,19 @@ public actor EngineActor {
             return existing
         }
 
-        try await evictIfNeeded(forGB: model.sizeGB, cfg: cfg)
+        try await evictIfNeeded(for: model, cfg: cfg)
+
+        // Hard guard: if this model's weights alone exceed the GPU wired limit
+        // (even with every other model evicted), spawning it would OOM the GPU.
+        // Fail fast with a clear, actionable error instead of crashing Metal.
+        let gpuLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: (await mem.read()).totalGB)
+        if model.sizeGB > gpuLimit * 0.95 {
+            let w = String(format: "%.0f", model.sizeGB)
+            let lim = String(format: "%.0f", gpuLimit)
+            throw EngineError.tooLarge(
+                "\(model.name) weights (~\(w) GB) exceed the Metal GPU wired limit (~\(lim) GB); use a smaller quant or split across nodes"
+            )
+        }
 
         // Preflight resource estimate: warn (never block) if this may OOM/swap.
         let memNow = await mem.read()
@@ -350,7 +372,8 @@ public actor EngineActor {
             engine = RunningEngine(
                 model: model.name, node: "local", host: "127.0.0.1", port: port,
                 pid: pid, split: isSplit, rpcPeers: splitPeers, placement: model.placement,
-                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens
+                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens,
+                kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
             )
             usedPorts.insert(port)
             do { try await waitReady(engine, cfg: cfg) } catch {
@@ -393,7 +416,8 @@ public actor EngineActor {
             engine = RunningEngine(
                 model: model.name, node: node, host: n.host, port: actualPort,
                 pid: 0, split: isSplit, rpcPeers: splitPeers, placement: model.placement,
-                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: model.ctx
+                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: model.ctx,
+                kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
             )
         }
 
@@ -424,7 +448,7 @@ public actor EngineActor {
             engines[key] = existing
             return existing
         }
-        try await evictIfNeeded(forGB: model.sizeGB, cfg: cfg)
+        try await evictIfNeeded(for: model, cfg: cfg)
         let cacheTokens = await cacheForSpawn(model)
         var args = [
             "-m", model.gguf,
@@ -452,7 +476,8 @@ public actor EngineActor {
         var engine = RunningEngine(
             model: model.name, node: "local", host: HostInfo.primaryIP(), port: port,
             pid: pid, split: !rpc.isEmpty, rpcPeers: rpc, placement: model.placement,
-            loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens
+            loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens,
+            kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
         )
         usedPorts.insert(port)
         do { try await waitReady(engine, cfg: cfg) } catch {
@@ -580,12 +605,18 @@ public actor EngineActor {
         }
     }
 
-    private func evictIfNeeded(forGB: Double, cfg: ConfigSnapshot) async throws {
+    private func evictIfNeeded(for model: CatalogModel, cfg: ConfigSnapshot) async throws {
+        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: (await mem.read()).totalGB)
         var guardCount = engines.count
         while guardCount > 0 {
             guardCount -= 1
             let info = await mem.read()
-            if info.freeGB >= cfg.minFreeRamGB + max(1, forGB / 2) { return }
+            let ramOK = info.freeGB >= cfg.minFreeRamGB + max(1, model.sizeGB / 2)
+            // GPU: this model's weights plus the already-resident GPU footprint
+            // must fit under the Metal wired limit, or the load will OOM even
+            // when system RAM looks free.
+            let gpuOK = residentGPUFootprintGB(excluding: model.name) + model.sizeGB <= limit * 0.95
+            if ramOK && gpuOK { return }
             let victims = engines.values
                 .filter { !$0.split }
                 .sorted { $0.lastUsed < $1.lastUsed }
@@ -598,7 +629,7 @@ public actor EngineActor {
                 ("node", .string(victim.node)),
                 ("gb", .jDouble(victim.sizeGB)),
                 ("ms", .jInt(0)),
-                ("reason", .string("lru_evict")),
+                ("reason", .string(ramOK ? "gpu_pressure" : "lru_evict")),
             ])
         }
     }
@@ -611,14 +642,44 @@ public actor EngineActor {
     /// model is not yet resident, headroom kept for the OS), clamped to
     /// [2048, model.ctx] per slot.
     public func cacheTokens(for model: CatalogModel, loaded: Bool) async -> Int {
-        let slots = max(1, model.slots)
-        let kv = model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
         let info = await mem.read()
         let free = loaded ? info.freeGB : info.freeGB - model.sizeGB
-        let budgetMB = max(2048.0, (free - 2.0) * 1024.0)
-        let perSlot = Int(budgetMB / Double(slots) / kv) * 1024
-        let capped = min(max(perSlot, 2048), model.ctx)
+        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: info.totalGB)
+        let residentGPU = residentGPUFootprintGB(excluding: model.name)
+        return Self.sizedCacheTokens(
+            freeGB: free, gpuLimitGB: limit, residentGPU: residentGPU,
+            sizeGB: model.sizeGB, slots: model.slots, kvMBPer1k: model.kvMBPer1k, ctx: model.ctx
+        )
+    }
+
+    /// Pure GPU+RAM-aware KV sizing (no actor state) — the math behind
+    /// `cacheTokens`, extracted so it can be unit-tested. Every slot gets an
+    /// even share of the smaller of the RAM headroom and the GPU wired-limit
+    /// headroom (after weights), clamped to [2048, ctx] per slot.
+    static func sizedCacheTokens(freeGB: Double, gpuLimitGB: Double, residentGPU: Double,
+                                sizeGB: Double, slots: Int, kvMBPer1k: Double, ctx: Int) -> Int {
+        let slots = max(1, slots)
+        let kv = kvMBPer1k > 0 ? kvMBPer1k : 100.0
+        let ramBudgetMB = max(2048.0, (freeGB - 2.0) * 1024.0)
+        var perSlot = Int(ramBudgetMB / Double(slots) / kv) * 1024
+        let gpuHeadroomGB = gpuLimitGB * 0.92 - residentGPU - sizeGB
+        if gpuHeadroomGB < 0 {
+            perSlot = 2048
+        } else {
+            let gpuTokensPerSlot = Int((gpuHeadroomGB * 1024.0) / kv * 1024.0 / Double(slots))
+            perSlot = min(perSlot, max(2048, gpuTokensPerSlot))
+        }
+        let capped = min(max(perSlot, 2048), ctx)
         return capped * slots
+    }
+
+    /// Sum of the live GPU footprint of every resident engine, optionally
+    /// excluding a model (used when sizing that same model's own budget).
+    private func residentGPUFootprintGB(excluding: String? = nil) -> Double {
+        engines.values.reduce(0) { acc, e in
+            if let ex = excluding, e.model == ex { return acc }
+            return acc + e.gpuFootprintGB
+        }
     }
 
     private func cacheForSpawn(_ model: CatalogModel) async -> Int {

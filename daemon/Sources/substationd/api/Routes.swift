@@ -234,9 +234,22 @@ public enum Routes {
                 .object([
                     "model": .string(e.model), "node": .string(e.node), "port": .jInt(e.port),
                     "split": .bool(e.split), "rpc_peers": .array(e.rpcPeers.map { JSONValue.string($0) }),
+                    "ctx": .jInt(e.ctx),
+                    "weights_gb": .jDouble((e.sizeGB * 10).rounded() / 10),
+                    "gpu_footprint_gb": .jDouble((e.gpuFootprintGB * 10).rounded() / 10),
                 ])
             })
+            // GPU wired-memory budget: what's resident vs the Metal limit.
+            let residentGPU = engines.reduce(0) { $0 + $1.gpuFootprintGB }
+            obj["gpu_budget"] = .object([
+                "wired_limit_gb": .jDouble((gpuLimit * 10).rounded() / 10),
+                "resident_gb": .jDouble((residentGPU * 10).rounded() / 10),
+                "headroom_gb": .jDouble(((gpuLimit - residentGPU) * 10).rounded() / 10),
+            ])
             obj["nodes"] = await kit.nodes.nodesJSON()
+            // Catalog reconciliation: which local profiles can actually be
+            // served by at least one healthy node (or this host if local is on)?
+            obj["catalog_reconciliation"] = Self.reconcileCatalog(cfg: cfg, nodes: await kit.nodes.allNodes())
             obj["version"] = .string(version)
             return jsonResponse(.object(obj))
         }
@@ -333,6 +346,9 @@ public enum Routes {
             do {
                 let e = try await kit.engines.ensureLoaded(model, placement: Placement.parse(model.placement), cfg: cfg)
                 return jsonResponse(.object(["loaded": .bool(true), "model": .string(e.model), "node": .string(e.node), "port": .jInt(e.port)]))
+            } catch let err as EngineError {
+                if case .tooLarge(let m) = err { throw APIError.noCapacity(m) }
+                throw APIError.upstream("\(err)")
             } catch {
                 throw APIError.upstream("\(error)")
             }
@@ -849,5 +865,40 @@ public enum Routes {
             obj["daemon"] = .object(d)
         }
         return .object(obj)
+    }
+
+    /// Reconcile the controller's local model profiles against what each
+    /// healthy node actually reports it can serve (catalog entry present on
+    /// disk). Profiles with no capable node are surfaced as "unservable" so a
+    /// controller↔node catalog mismatch is visible before a request fails.
+    static func reconcileCatalog(cfg: ConfigSnapshot, nodes: [NodeEntry]) -> JSONValue {
+        let localProfiles = cfg.models.filter { $0.kind == "local" }
+        let fm = FileManager.default
+        var nodeServes: [(id: String, names: Set<String>)] = []
+        for n in nodes where n.healthy {
+            var names = Set<String>()
+            if let cat = n.lastHealth?["catalog"]?.arrayValue {
+                for c in cat where c["exists"]?.boolValue == true {
+                    if let nm = c["name"]?.stringValue { names.insert(nm) }
+                }
+            }
+            nodeServes.append((n.id, names))
+        }
+        var perProfile: [JSONValue] = []
+        var unservable: [String] = []
+        for p in localProfiles {
+            var capable: [String] = []
+            if cfg.localEnabled && fm.fileExists(atPath: p.gguf) { capable.append("local") }
+            for ns in nodeServes where ns.names.contains(p.name) { capable.append(ns.id) }
+            if capable.isEmpty { unservable.append(p.name) }
+            perProfile.append(.object([
+                "profile": .string(p.name),
+                "capable_nodes": .array(capable.map { JSONValue.string($0) }),
+            ]))
+        }
+        return .object([
+            "profiles": .array(perProfile),
+            "unservable": .array(unservable.map { JSONValue.string($0) }),
+        ])
     }
 }

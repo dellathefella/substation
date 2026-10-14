@@ -11,6 +11,7 @@ public enum APIError: Error {
     case upstream(String)
     case triageModelMissing(String)
     case noModelLoaded(String)
+    case noCapacity(String)
 
     public var abortResponse: Response {
         let code: String
@@ -22,6 +23,7 @@ public enum APIError: Error {
         case .unauthorized: status = .unauthorized; code = "unauthorized"; message = "missing or invalid bearer token"
         case .notFound(let m): status = .notFound; code = "not_found"; message = m
         case .upstream(let m): status = .badGateway; code = "upstream_error"; message = m
+        case .noCapacity(let m): status = .insufficientStorage; code = "no_capacity"; message = m
         case .triageModelMissing(let path):
             status = .serviceUnavailable; code = "triage_model_missing"
             message = "Auto mode requires the triage (small) model — not found at '\(path)'. Download it (or set orchestrator.triage_gguf) to unlock auto routing; until then select a specific model by name."
@@ -62,6 +64,28 @@ public struct ChatPipeline: Sendable {
             "params": .object(params),
         ]))
         return sha256Hex(canonical)
+    }
+
+    /// Reasoning-model guard: if the routed model thinks before answering and
+    /// the caller asked for only a few tokens, raise the cap to the configured
+    /// reserve so the visible answer isn't entirely consumed by
+    /// `reasoning_content` (which would otherwise return empty `content`).
+    /// No-op when the model isn't flagged reasoning or the reserve is 0.
+    func applyReasoningReserve(_ engineBody: inout [String: JSONValue], model: String, cfg: ConfigSnapshot, requestId: String) {
+        guard cfg.reasoningReserveTokens > 0, let m = cfg.model(model), m.reasoning else { return }
+        let reserve = cfg.reasoningReserveTokens
+        let key: String?
+        if engineBody["max_completion_tokens"] != nil { key = "max_completion_tokens" }
+        else if engineBody["max_tokens"] != nil { key = "max_tokens" }
+        else { key = nil }
+        guard let key, let cur = engineBody[key]?.intValue, cur < reserve else { return }
+        engineBody[key] = .jInt(reserve)
+        Task { [events = orch.events] in
+            await events.publish("reasoning.reserve", [
+                ("id", .string(requestId)), ("model", .string(model)),
+                ("from", .jInt(cur)), ("to", .jInt(reserve)),
+            ])
+        }
     }
 
     /// OpenAI-compatible non-streaming completion, transparently re-labeled.
@@ -121,6 +145,7 @@ public struct ChatPipeline: Sendable {
         var engineBody = body.objectValue ?? [:]
         engineBody["model"] = .string(route.model)
         engineBody["stream"] = .bool(false)
+        applyReasoningReserve(&engineBody, model: route.model, cfg: cfg, requestId: route.requestId)
 
         let t0 = Date()
         let status: Int
@@ -216,6 +241,7 @@ public struct ChatPipeline: Sendable {
         var engineBody = body.objectValue ?? [:]
         engineBody["model"] = .string(route.model)
         engineBody["stream"] = .bool(true)
+        applyReasoningReserve(&engineBody, model: route.model, cfg: await orch.cfg.snapshot, requestId: route.requestId)
         // Ask the engine for an authoritative usage chunk (prompt token counts);
         // strip it from the forwarded stream unless the client asked for it.
         let clientWantsUsage = body["stream_options"]?["include_usage"]?.boolValue ?? false

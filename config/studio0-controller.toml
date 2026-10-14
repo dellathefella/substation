@@ -55,6 +55,10 @@ cache_max_entries = 256.0
 default_model = ""
 enabled = true
 idle_load_only = true
+# Reasoning models (qwen3.5) emit reasoning_content before the answer; if a
+# request asks for fewer tokens than this, raise it so the visible reply isn't
+# empty. 0 disables.
+reasoning_reserve_tokens = 2048.0
 triage_gguf = "/Users/jdella/substation-controller/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 triage_port = 8931.0
 triage_timeout_ms = 400.0
@@ -80,6 +84,7 @@ gguf = "/Volumes/SANDISK1TB/models/qwen3.5-35b-a3b/Qwen3.5-35B-A3B-UD-Q4_K_XL.gg
 kv_mb_per_1k_ctx = 24.0
 name = "qwen3.5-35b-a3b"
 node = "studio0"
+reasoning = true
 size_gb = 20.0
 tier = "fast"
 

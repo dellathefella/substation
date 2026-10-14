@@ -72,12 +72,26 @@ extension NodeKit {
                 "tok_s": .jDouble((rate * 100).rounded() / 100),
             ]))
         }
+        // Report this node's local catalog (name + whether the GGUF is present)
+        // so the controller can reconcile profiles against what we can actually
+        // serve, and surface "controller has a profile this node can't run".
+        let snap = await cfg.snapshot
+        let fm = FileManager.default
+        var catalog: [JSONValue] = []
+        for m in snap.models where m.kind == "local" {
+            catalog.append(.object([
+                "name": .string(m.name),
+                "gguf": .string(m.gguf),
+                "exists": .bool(fm.fileExists(atPath: m.gguf)),
+            ]))
+        }
         return .object([
             "ram_used_gb": .jDouble(((mem.totalGB - mem.freeGB) * 100).rounded() / 100),
             "ram_total_gb": .jDouble((mem.totalGB * 100).rounded() / 100),
             "gpu_pct": .jDouble(0),
             "runners": .array(runners),
             "rpc_up": .bool(rpcUp),
+            "catalog": .array(catalog),
             "system": await system.json(),
         ])
     }

@@ -47,6 +47,11 @@ public struct CatalogModel: Sendable, Hashable {
     /// pool so returning sessions reuse their prefix instead of re-prefilling.
     /// Only emitted when `cacheRamMiB` != 0 (requires the unified KV cache).
     public var cacheIdleSlots: Bool
+    /// Reasoning model: emits `reasoning_content` before the final answer.
+    /// When set and a request's `max_tokens` is below the configured
+    /// `reasoning_reserve_tokens`, the pipeline raises it so the visible
+    /// answer isn't starved by the thinking tokens.
+    public var reasoning: Bool
 }
 
 public struct NodeStatic: Sendable, Hashable {
@@ -91,6 +96,9 @@ public struct ConfigSnapshot: Sendable {
     public var triageUpgradeConfidence: Double { tree["orchestrator"]?["triage_upgrade_confidence"]?.doubleValue ?? 0.8 }
     public var cacheEnabled: Bool { tree["orchestrator"]?["cache_enabled"]?.boolValue ?? true }
     public var cacheMaxEntries: Int { tree["orchestrator"]?["cache_max_entries"]?.intValue ?? 256 }
+    /// When a reasoning model's request `max_tokens` is below this, raise it so
+    /// the visible answer isn't starved by `reasoning_content`. 0 = disabled.
+    public var reasoningReserveTokens: Int { tree["orchestrator"]?["reasoning_reserve_tokens"]?.intValue ?? 0 }
     /// Model to use when auto routing but the orchestrator/triage model is unavailable.
     /// Empty → smallest catalog model.
     public var defaultModel: String { tree["orchestrator"]?["default_model"]?.stringValue ?? "" }
@@ -207,7 +215,8 @@ public struct ConfigSnapshot: Sendable {
                     .replacingOccurrences(of: " ", with: ""),
                 cacheReuse: m["cache_reuse"]?.intValue ?? 256,
                 cacheRamMiB: m["cache_ram_mib"]?.intValue ?? 8192,
-                cacheIdleSlots: m["cache_idle_slots"]?.boolValue ?? true
+                cacheIdleSlots: m["cache_idle_slots"]?.boolValue ?? true,
+                reasoning: m["reasoning"]?.boolValue ?? false
             )
         } ?? []
     }

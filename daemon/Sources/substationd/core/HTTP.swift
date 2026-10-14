@@ -93,6 +93,7 @@ public enum EngineError: Error, CustomStringConvertible {
     case timeout
     case notReady
     case notFound(String)
+    case tooLarge(String)
 
     public var description: String {
         switch self {
@@ -100,6 +101,7 @@ public enum EngineError: Error, CustomStringConvertible {
         case .timeout: return "timeout"
         case .notReady: return "engine not ready"
         case .notFound(let n): return "not found: \(n)"
+        case .tooLarge(let n): return "too large: \(n)"
         }
     }
 }

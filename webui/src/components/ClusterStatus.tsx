@@ -271,6 +271,29 @@ export function ClusterStatus(): React.JSX.Element {
           </button>
         </div>
       ))}
+      {st?.gpu_budget ? (
+        <div className="gpu-budget" title="Metal GPU wired-memory budget across all resident models" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 10px' }}>
+          <span className="dim" style={{ minWidth: 28 }}>GPU</span>
+          <div style={{ flex: 1, height: 8, background: '#232b3a', borderRadius: 4, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              width: `${Math.min(100, (st.gpu_budget.resident_gb / Math.max(1, st.gpu_budget.wired_limit_gb)) * 100)}%`,
+              background: st.gpu_budget.headroom_gb < 8 ? '#e5534b' : st.gpu_budget.headroom_gb < 24 ? '#d99a2b' : '#3fb950',
+            }} />
+          </div>
+          <span className="dim" style={{ whiteSpace: 'nowrap' }}>
+            {st.gpu_budget.resident_gb.toFixed(0)} / {st.gpu_budget.wired_limit_gb.toFixed(0)} GB · headroom {st.gpu_budget.headroom_gb.toFixed(0)} GB
+          </span>
+        </div>
+      ) : null}
+      {st?.catalog_reconciliation && st.catalog_reconciliation.unservable.length > 0 ? (
+        <div className="banner banner-warn" role="alert">
+          <span className="banner-code">catalog</span>
+          <span className="banner-msg">
+            No node can serve: {st.catalog_reconciliation.unservable.join(', ')} — add the GGUF to a node's catalog or remove the profile
+          </span>
+        </div>
+      ) : null}
       <div className="node-grid">
         {mem && mem.local_enabled !== false ? (
           <div className="node-card">

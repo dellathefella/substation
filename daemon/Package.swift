@@ -19,6 +19,15 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
-        )
+        ),
+        .testTarget(
+            name: "SubstationTests",
+            dependencies: [
+                "substationd",
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "NIOCore", package: "swift-nio"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )
