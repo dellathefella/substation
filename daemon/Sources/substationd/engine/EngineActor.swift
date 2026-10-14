@@ -75,7 +75,24 @@ public actor EngineActor {
 
     // MARK: - Spawning
 
+    /// llama.cpp's ngram-cache aborts if a --lookup-cache-* path is set but the
+    /// file is missing. Create an empty (valid) cache file so the engine can
+    /// start; the server only reads these, it never writes them back.
+    private func ensureLookupCacheFiles(_ args: [String]) {
+        let flags: Set<String> = ["--lookup-cache-static", "--lookup-cache-dynamic"]
+        let fm = FileManager.default
+        for (i, a) in args.enumerated() where flags.contains(a) {
+            guard i + 1 < args.count else { continue }
+            let path = args[i + 1]
+            if !path.isEmpty && !fm.fileExists(atPath: path) {
+                try? fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                fm.createFile(atPath: path, contents: Data())
+            }
+        }
+    }
+
     private func spawnProcess(_ exec: String, args: [String], name: String) -> Int32 {
+        ensureLookupCacheFiles(args)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: (exec as NSString).isAbsolutePath ? exec : FileManager.default.currentDirectoryPath + "/" + exec)
         p.arguments = args
@@ -99,6 +116,7 @@ public actor EngineActor {
         }
         let pid = p.processIdentifier
         managed[pid] = p
+        ChildPids.shared.add(pid)
         return pid
     }
 
@@ -133,6 +151,7 @@ public actor EngineActor {
         usleep(500_000)
         for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL) }
         managed.removeAll()
+        ChildPids.shared.clear()
         triagePid = 0
         rpcPid = 0
         rpcAdoptedPid = 0
@@ -491,7 +510,7 @@ public actor EngineActor {
             return false
         }
         let key = e.key
-        if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid) }
+        if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid); ChildPids.shared.remove(e.pid) }
         else if let n = cfg.node(e.node) {
             _ = try? await client.json(
                 method: "POST", url: "http://\(n.host):\(n.agentPort)/api/node/runner/kill",
@@ -520,7 +539,7 @@ public actor EngineActor {
     public func unload(model: String) async {
         for (key, e) in engines where e.model == model {
             engines.removeValue(forKey: key)
-            if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid) }
+            if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid); ChildPids.shared.remove(e.pid) }
             slotUtil.removeValue(forKey: key)
             lastMetrics.removeValue(forKey: key)
             await events.publish("model.unloaded", [
@@ -543,7 +562,7 @@ public actor EngineActor {
                 .sorted { $0.lastUsed < $1.lastUsed }
             guard let victim = victims.first ?? engines.values.sorted(by: { $0.lastUsed < $1.lastUsed }).first else { return }
             engines.removeValue(forKey: victim.key)
-            if victim.pid > 0 { kill(victim.pid, SIGTERM); managed.removeValue(forKey: victim.pid) }
+            if victim.pid > 0 { kill(victim.pid, SIGTERM); managed.removeValue(forKey: victim.pid); ChildPids.shared.remove(victim.pid) }
             slotUtil.removeValue(forKey: victim.key)
             await events.publish("model.unloaded", [
                 ("model", .string(victim.model)),

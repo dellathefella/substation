@@ -126,6 +126,9 @@ if role == "node" {
     NSLog("substationd controller listening on http://\(snapshot.bind):\(port)")
 }
 
+// Clean up GPU-holding children on SIGTERM/SIGINT (Vapor doesn't catch SIGTERM,
+// so without this the process dies before the shutdownAll below ever runs).
+installChildCleanupSignalHandlers()
 try await app.execute()
 // Never leave GPU-holding llama-servers orphaned when this daemon goes down.
 await engines.shutdownAll()
@@ -191,6 +194,7 @@ func startLinkProbeLoop(_ kit: Kit) {
             for n in await kit.nodes.allNodes() {
                 let link = await LinkProbe.probe(
                     host: n.ip, agentPort: n.agentPort,
+                    tbHost: cfg.node(n.id)?.rpcHost,
                     probeMB: cfg.probeBytesMB, cfg: cfg, events: kit.events, client: kit.client
                 )
                 await kit.nodes.setLink(id: n.id, link: link)
@@ -234,6 +238,7 @@ func startHealLoop(_ kit: Kit) {
                     )
                     let link = await LinkProbe.probe(
                         host: node.ip, agentPort: node.agentPort,
+                        tbHost: cfg.node(node.id)?.rpcHost,
                         probeMB: cfg.probeBytesMB, cfg: cfg, events: kit.events, client: kit.client
                     )
                     await kit.nodes.setLink(id: node.id, link: link)
@@ -253,11 +258,28 @@ func startHealLoop(_ kit: Kit) {
 
 func startBeaconListener(_ kit: Kit) {
     let nodes = kit.nodes
+    let cfgStore = kit.cfg
+    let events = kit.events
     let thread = Thread {
         BeaconTransport.listenForever { data in
             guard var beacon = try? JSONDecoder().decode(Beacon.self, from: data), beacon.magic == "SUBJ" else { return }
             if beacon.ip.isEmpty { beacon.ip = "127.0.0.1" }
-            Task { await nodes.ingestBeacon(beacon) }
+            Task {
+                await nodes.ingestBeacon(beacon)
+                let cfg = await cfgStore.snapshot
+                guard cfg.clusterEnabled, cfg.autoDiscover, !cfg.authToken.isEmpty else { return }
+                let expected = BeaconTransport.secretHash(secret: cfg.authToken, nodeId: beacon.node_id)
+                guard !expected.isEmpty, beacon.secret_hash == expected else { return }
+                if await nodes.node(beacon.node_id) == nil {
+                    await nodes.register(id: beacon.node_id, name: beacon.name, ip: beacon.ip,
+                                       agentPort: beacon.agent_port, rpcPort: beacon.rpc_port)
+                    await events.publish("cluster.node_autojoined", .object([
+                        "node": .string(beacon.node_id),
+                        "name": .string(beacon.name),
+                        "ip": .string(beacon.ip),
+                    ]))
+                }
+            }
         }
     }
     thread.name = "substation-beacon-listener"
@@ -276,7 +298,9 @@ func startBeaconSender(_ kit: NodeKit) {
                 ip: HostInfo.primaryIP(),
                 agent_port: cfg.agentPort,
                 version: Routes.version,
-                join_hash: BeaconTransport.joinHash(code: code, nodeId: kit.nodeId)
+                join_hash: BeaconTransport.joinHash(code: code, nodeId: kit.nodeId),
+                rpc_port: cfg.rpcPort,
+                secret_hash: BeaconTransport.secretHash(secret: cfg.authToken, nodeId: kit.nodeId)
             )
             BeaconTransport.send(beacon, port: BeaconTransport.port)
             try? await Task.sleep(for: .seconds(5))

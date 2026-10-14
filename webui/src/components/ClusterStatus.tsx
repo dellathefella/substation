@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, getStatus, type AdminResult } from '../api.js';
 import { fmtAgo, fmtNum, truncate } from '../format.js';
 import { useStore } from '../store.js';
-import type { DaemonStatus, DiscoveryPeer, NodeHealth } from '../types.js';
+import type { DaemonStatus, DiscoveryPeer, NodeHealth, ThunderboltLink } from '../types.js';
 import { Bar, Empty, Panel, Pill } from './ui.js';
 
 function linkTone(kind: string | undefined): 'ok' | 'info' | 'muted' {
@@ -16,6 +16,7 @@ interface LinkLite {
   rtt_ms?: number;
   mbps?: number;
   rdma?: boolean;
+  tb?: ThunderboltLink | null;
 }
 
 function linkRow(link: LinkLite | null | undefined): React.JSX.Element {
@@ -26,6 +27,24 @@ function linkRow(link: LinkLite | null | undefined): React.JSX.Element {
       <span className="nc-metric">{link ? `rtt ${fmtNum(link.rtt_ms, 2)}ms` : 'rtt —'}</span>
       <span className="nc-metric">{link ? `${fmtNum((link.mbps ?? 0) / 1000, 1)} Gbps` : '—'}</span>
       {link ? <span className={`badge ${link.rdma ? 'badge-rdma' : 'badge-tcp'}`}>{link.rdma ? 'RDMA' : 'TCP'}</span> : null}
+    </div>
+  );
+}
+
+function tbRow(tb: ThunderboltLink | null | undefined): React.JSX.Element | null {
+  if (!tb) return null;
+  const up = tb.reachable === true;
+  return (
+    <div className="nc-link nc-tb" title="Thunderbolt link (RPC path)">
+      <Pill tone={up ? 'ok' : 'err'} title={up ? 'Thunderbolt link up' : 'Thunderbolt link down'}>⚡ TB {up ? 'up' : 'down'}</Pill>
+      {up ? (
+        <>
+          <span className="nc-metric">rtt {fmtNum(tb.rtt_ms, 2)}ms</span>
+          <span className="nc-metric">{fmtNum((tb.mbps ?? 0) / 1000, 1)} Gbps</span>
+        </>
+      ) : (
+        <span className="nc-metric dim">no TB link</span>
+      )}
     </div>
   );
 }
@@ -106,6 +125,7 @@ function NodeCard(props: {
       </div>
       <ResourceBars ramUsed={ramUsed} ramTotal={ramTotal} cpu={cpu} gpu={gpu} />
       {linkRow(node.link ?? peer?.link)}
+      {tbRow((node.link ?? peer?.link)?.tb)}
       <div className="hc-foot">
         {rx !== undefined ? <span className="dim">↓ {(rx / 1_048_576).toFixed(1)} MB/s</span> : null}
         {tx !== undefined ? <span className="dim">↑ {(tx / 1_048_576).toFixed(1)} MB/s</span> : null}
@@ -238,7 +258,7 @@ export function ClusterStatus(): React.JSX.Element {
       }
     >
       {warnings.map((w) => (
-        <div key={`${w.node}-${w.code}-${w.ts}`} className={`banner banner-${w.level === 'error' ? 'err' : 'warn'}`} role="alert">
+        <div key={`${w.node}-${w.code}`} className={`banner banner-${w.level === 'error' ? 'err' : 'warn'}`} role="alert">
           <span className="banner-code">{w.code}</span>
           <span className="banner-node">{w.node}</span>
           <span className="banner-msg">{w.msg}{w.repeated ? ` · ×${w.repeated + 1}` : ''}</span>

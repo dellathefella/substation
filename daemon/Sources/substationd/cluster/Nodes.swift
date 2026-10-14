@@ -180,7 +180,7 @@ public actor NodesActor {
 /// TCP-latency + bulk-transfer link probe with RDMA/TB warnings (§6).
 public enum LinkProbe {
     public static func probe(
-        host: String, agentPort: Int, probeMB: Int = 16,
+        host: String, agentPort: Int, tbHost: String? = nil, probeMB: Int = 16,
         cfg: ConfigSnapshot, events: EventActor, client: EngineClient
     ) async -> JSONValue {
         var rttMs = -1.0
@@ -233,11 +233,43 @@ public enum LinkProbe {
             ]), cooldown: 300, throttle: true)
         }
 
+        // Thunderbolt link probe: measure the RPC path over the TB IP (rpc_host).
+        // The agent binds 0.0.0.0 so it is reachable on the TB interface too.
+        // Skipped when no distinct TB host is configured.
+        var tbLink: JSONValue? = nil
+        if let tb = tbHost, !tb.isEmpty, tb != host {
+            var tbRtt = -1.0
+            for _ in 0..<3 {
+                let t0 = Date()
+                if let (status, _) = try? await client.getText("http://\(tb):\(agentPort)/api/node/health", timeout: 1.5),
+                   status < 500
+                {
+                    let ms = Date().timeIntervalSince(t0) * 1000
+                    if tbRtt < 0 || ms < tbRtt { tbRtt = ms }
+                }
+            }
+            let reachable = tbRtt >= 0
+            var tbMbps = -1.0
+            if reachable {
+                let t1 = Date()
+                if let got = try? await client.downloadBytes(url: "http://\(tb):\(agentPort)/api/node/blob?mbps=\(probeMB)", maxBytes: probeMB * 1_048_576, timeout: 15) {
+                    let sec = Date().timeIntervalSince(t1)
+                    if sec > 0.005 { tbMbps = (Double(got) * 8 / 1e6) / sec }
+                }
+            }
+            tbLink = .object([
+                "reachable": .bool(reachable),
+                "rtt_ms": .jDouble((tbRtt * 100).rounded() / 100),
+                "mbps": .jDouble((tbMbps * 100).rounded() / 100),
+            ])
+        }
+
         return .object([
             "kind": .string(kind),
             "rtt_ms": .jDouble((rttMs * 100).rounded() / 100),
             "mbps": .jDouble((mbps * 100).rounded() / 100),
             "rdma": .bool(false),
+            "tb": tbLink ?? .null,
         ])
     }
 }

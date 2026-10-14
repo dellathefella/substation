@@ -1012,6 +1012,14 @@ code {
   flex-wrap: wrap;
 }
 
+.nc-tb {
+  margin-top: 3px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  background: rgba(45, 212, 191, 0.06);
+  border: 1px solid rgba(45, 212, 191, 0.20);
+}
+
 .nc-metric {
   font-family: var(--mono);
   font-size: 10px;

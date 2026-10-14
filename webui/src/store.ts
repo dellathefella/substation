@@ -282,6 +282,15 @@ function applyFramesInner(
   };
 
   const pushWarning = (w: ClusterWarning): void => {
+    const dupe = warnings.find((x) => x.node === w.node && x.code === w.code);
+    if (dupe) {
+      // collapse same (node, code) into one banner; keep the latest repeated count
+      warnings = [
+        { ...w, repeated: w.repeated ?? dupe.repeated },
+        ...warnings.filter((x) => !(x.node === w.node && x.code === w.code)),
+      ].slice(0, WARN_CAP);
+      return;
+    }
     warnings = [w, ...warnings].slice(0, WARN_CAP);
     toasts.push({ id: toastSeq++, level: w.level === 'error' ? 'error' : 'warn', title: w.code, msg: `[${w.node}] ${w.msg}`, ts: w.ts });
   };
@@ -496,6 +505,7 @@ function applyFramesInner(
           code: String(d['code'] ?? 'warning'),
           msg: String(d['msg'] ?? ''),
           ts: f.ts,
+          repeated: typeof d['repeated'] === 'number' ? d['repeated'] : undefined,
         });
         set({ warnings, toasts: [...toasts] });
         break;

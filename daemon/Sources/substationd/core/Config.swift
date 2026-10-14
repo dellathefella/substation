@@ -70,6 +70,9 @@ public struct ConfigSnapshot: Sendable {
     public var controllerId: String { tree["cluster"]?["controller_id"]?.stringValue ?? "studio0" }
     public var heartbeatMs: Int { tree["cluster"]?["heartbeat_ms"]?.intValue ?? 2000 }
     public var autoHeal: Bool { tree["cluster"]?["auto_heal"]?.boolValue ?? true }
+    /// Auto-register discovered peers as nodes when they present a valid
+    /// shared-secret hash (derived from daemon.auth_token). Requires a non-empty token.
+    public var autoDiscover: Bool { tree["cluster"]?["auto_discover"]?.boolValue ?? false }
     public var probeBytesMB: Int { tree["cluster"]?["probe_bytes_mb"]?.intValue ?? 16 }
 
     public var orchestratorEnabled: Bool { tree["orchestrator"]?["enabled"]?.boolValue ?? true }

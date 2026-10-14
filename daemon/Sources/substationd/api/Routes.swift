@@ -556,7 +556,7 @@ public enum Routes {
                     body: .object([:]),
                     timeout: 15
                 )
-                let link = await LinkProbe.probe(host: ip, agentPort: agentPort, cfg: cfg, events: events, client: client)
+                let link = await LinkProbe.probe(host: ip, agentPort: agentPort, tbHost: cfg.node(nodeId)?.rpcHost, cfg: cfg, events: events, client: client)
                 await nodesActor.setLink(id: nodeId, link: link)
             }
             return jsonResponse(.object(["joined": .bool(true), "node_id": .string(nodeId)]))

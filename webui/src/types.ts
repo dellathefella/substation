@@ -9,6 +9,20 @@ export interface RunnerState {
   tok_s?: number;
 }
 
+export interface ThunderboltLink {
+  reachable?: boolean;
+  rtt_ms?: number;
+  mbps?: number;
+}
+
+export interface NodeLink {
+  kind?: string;
+  rtt_ms?: number;
+  mbps?: number;
+  rdma?: boolean;
+  tb?: ThunderboltLink | null;
+}
+
 export interface NodeHealth {
   node: string;
   ram_used_gb?: number;
@@ -20,7 +34,7 @@ export interface NodeHealth {
   tok_s?: number;
   ts: number;
   healthy?: boolean;
-  link?: { kind?: string; rtt_ms?: number; mbps?: number; rdma?: boolean } | null;
+  link?: NodeLink | null;
   health?: {
     ram_used_gb?: number;
     ram_total_gb?: number;
@@ -62,7 +76,7 @@ export interface NodeInfo {
     runners?: RunnerState[];
     system?: SystemStats;
   } | null;
-  link?: { kind?: string; rtt_ms?: number; mbps?: number; rdma?: boolean } | null;
+  link?: NodeLink | null;
 }
 
 export interface DaemonStatus {
@@ -142,6 +156,7 @@ export interface PeerLink {
   rtt_ms: number;
   mbps: number;
   rdma: boolean;
+  tb?: ThunderboltLink | null;
 }
 
 export interface DiscoveryPeer {

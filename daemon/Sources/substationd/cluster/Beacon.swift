@@ -9,8 +9,10 @@ public struct Beacon: Sendable, Codable {
     public var agent_port: Int
     public var version: String
     public var join_hash: String
+    public var rpc_port: Int
+    public var secret_hash: String
 
-    public init(node_id: String, name: String, ip: String, agent_port: Int, version: String, join_hash: String) {
+    public init(node_id: String, name: String, ip: String, agent_port: Int, version: String, join_hash: String, rpc_port: Int = 50052, secret_hash: String = "") {
         self.magic = "SUBJ"
         self.node_id = node_id
         self.name = name
@@ -18,6 +20,27 @@ public struct Beacon: Sendable, Codable {
         self.agent_port = agent_port
         self.version = version
         self.join_hash = join_hash
+        self.rpc_port = rpc_port
+        self.secret_hash = secret_hash
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case magic, node_id, name, ip, agent_port, version, join_hash, rpc_port, secret_hash
+    }
+
+    /// Tolerant decode: older node agents don't send rpc_port/secret_hash, so
+    /// fall back to defaults instead of dropping the whole beacon.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        magic = try c.decode(String.self, forKey: .magic)
+        node_id = try c.decode(String.self, forKey: .node_id)
+        name = try c.decode(String.self, forKey: .name)
+        ip = try c.decode(String.self, forKey: .ip)
+        agent_port = try c.decode(Int.self, forKey: .agent_port)
+        version = try c.decode(String.self, forKey: .version)
+        join_hash = try c.decode(String.self, forKey: .join_hash)
+        rpc_port = try c.decodeIfPresent(Int.self, forKey: .rpc_port) ?? 50052
+        secret_hash = try c.decodeIfPresent(String.self, forKey: .secret_hash) ?? ""
     }
 }
 
@@ -28,6 +51,13 @@ public enum BeaconTransport {
 
     public static func joinHash(code: String, nodeId: String) -> String {
         String(sha256Hex(code + nodeId).prefix(16))
+    }
+
+    /// Persistent shared-secret hash for auto-discovery: derived from the
+    /// daemon auth token, so only peers that know the token can auto-join.
+    public static func secretHash(secret: String, nodeId: String) -> String {
+        guard !secret.isEmpty else { return "" }
+        return String(sha256Hex("substation-auto:" + secret + ":" + nodeId).prefix(32))
     }
 
     public static func send(_ beacon: Beacon, port: Int = port) {

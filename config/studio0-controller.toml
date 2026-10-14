@@ -37,13 +37,15 @@ rpc_port = 50052.0
 
 [nodes.studio0]
 agent_port = 8801.0
-host = "192.168.7.248"
+host = "10.0.2.172"
+rpc_host = "192.168.100.1"
 rpc_port = 50052.0
 total_ram_gb = 256.0
 
 [nodes.studio1]
 agent_port = 8801.0
-host = "192.168.7.84"
+host = "10.0.4.108"
+rpc_host = "192.168.100.2"
 rpc_port = 50052.0
 total_ram_gb = 256.0
 
@@ -60,11 +62,6 @@ triage_upgrade_confidence = 0.8
 
 [orchestrator.tiers]
 
-[orchestrator.tiers.balanced]
-desc = "Mid-size coders (Studio0 llama.cpp tracks)"
-models = ["ornith-1.5-35b"]
-priority = 1.0
-
 [orchestrator.tiers.fast]
 desc = "Light & quick (Qwen3.5-35B-A3B MoE on Studio0)"
 models = ["qwen3.5-35b-a3b"]
@@ -72,7 +69,7 @@ priority = 0.0
 
 [orchestrator.tiers.smart]
 desc = "Flagship Mac Studio serving (llama.cpp tracks)"
-models = ["qwen3.8-flash-next", "glm-5.3-flash", "glm-5.3-flash-rpc"]
+models = ["qwen3.8-flash-next"]
 priority = 2.0
 
 [[models]]
@@ -88,49 +85,11 @@ tier = "fast"
 
 [[models]]
 ctx = 262144.0
-enabled = false
-flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap+mlock", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--ubatch-size", "1024"]
-gguf = "/Volumes/SANDISK1TB/models/ornith-1.5-35b/Ornith-1.5-35B-Q4_K_M.gguf"
-kv_mb_per_1k_ctx = 24.0
-name = "ornith-1.5-35b"
-node = "studio0"
-size_gb = 36.0
-tier = "balanced"
-
-[[models]]
-ctx = 262144.0
 enabled = true
-flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap+mlock", "--cache-type-k", "f16", "--cache-type-v", "f16", "--ubatch-size", "4096", "--spec-type", "draft-mtp", "--model-draft", "/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/mtp-Qwen3.8-Flash-Next-Q8_0.gguf", "--spec-draft-n-max", "5", "--spec-draft-sampling", "probabilistic", "--reasoning-format", "none", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0"]
+flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap+mlock", "--cache-type-k", "f16", "--cache-type-v", "f16", "--ubatch-size", "4096", "--spec-type", "ngram-cache", "--lookup-cache-dynamic", "/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/lookup-dynamic.bin", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0"]
 gguf = "/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/Qwen3.8-Flash-Next-IQ4_NL-00001-of-00002.gguf"
 kv_mb_per_1k_ctx = 24.0
 name = "qwen3.8-flash-next"
 node = "studio0"
 size_gb = 150.0
 tier = "smart"
-
-[[models]]
-ctx = 223232.0
-enabled = true
-flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap", "--cache-type-k", "f16", "--cache-type-v", "f16", "--ubatch-size", "2048", "--spec-type", "draft-mtp", "--model-draft", "/Users/jdella/models/glm-5.3-flash/mtp-GLM-5.3-Flash-Q8_0.gguf"]
-gguf = "/Users/jdella/models/glm-5.3-flash/GLM-5.3-Flash-Q4_K-00001-of-00002.gguf"
-kv_mb_per_1k_ctx = 24.0
-mmproj = "/Users/jdella/models/glm-5.3-flash/mmproj-GLM-5.3-Flash-Q8_0.gguf"
-name = "glm-5.3-flash"
-node = "studio1"
-size_gb = 171.0
-tier = "smart"
-vision = true
-
-[[models]]
-ctx = 262144.0
-enabled = false
-flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap", "--cache-type-k", "f16", "--cache-type-v", "f16", "--ubatch-size", "1024"]
-gguf = "/Users/jdella/models/glm-5.3-flash/GLM-5.3-Flash-Q4_K-00001-of-00002.gguf"
-kv_mb_per_1k_ctx = 24.0
-mmproj = "/Users/jdella/models/glm-5.3-flash/mmproj-GLM-5.3-Flash-Q8_0.gguf"
-name = "glm-5.3-flash-rpc"
-placement = "split:studio1+studio0"
-size_gb = 171.0
-tensor_split = "1,2"
-tier = "smart"
-vision = true
