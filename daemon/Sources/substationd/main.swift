@@ -85,6 +85,27 @@ if FileManager.default.fileExists(atPath: absolute(snapshot.webuiDist)) {
     app.middleware.use(FileMiddleware(publicDirectory: absolute(webuiDir)))
 }
 
+// Surface the effective GPU wired budget at startup. If the configured
+// macOS reserve implies more GPU than the kernel currently allows, print the
+// exact sudo command to raise the wired limit (the daemon can't do it itself).
+do {
+    let m = await mem.read()
+    let kernelLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: m.totalGB)
+    let effective = ResourceEstimator.gpuWiredLimitGB(totalGB: m.totalGB, macosReserveGB: snapshot.macosReserveGB)
+    if snapshot.macosReserveGB > 0 {
+        let desired = m.totalGB - snapshot.macosReserveGB
+        if desired > kernelLimit + 0.5 {
+            NSLog(String(format: "GPU budget: %.0f GB wired (kernel limit %.0f GB). To unlock %.0f GB for the GPU (macOS keeps %.0f GB), run: sudo sysctl -w iogpu.wired_limit_mb=%d",
+                        effective, kernelLimit, desired, snapshot.macosReserveGB, Int(desired * 1024)))
+        } else {
+            NSLog(String(format: "GPU budget: %.0f GB wired (macOS reserve %.0f GB, kernel limit %.0f GB)",
+                        effective, snapshot.macosReserveGB, kernelLimit))
+        }
+    } else {
+        NSLog(String(format: "GPU budget: %.0f GB wired (kernel wired_limit_mb; set engines.macos_reserve_gb to override)", effective))
+    }
+}
+
 if role == "node" {
     let nodeKit = NodeKit(cfg: cfg, events: events, engines: engines, mem: mem, dataDir: dataDir, system: system)
     try NodeRoutes.register(app, nodeKit)

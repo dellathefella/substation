@@ -314,7 +314,7 @@ public actor EngineActor {
         // Skipped for split placements — spreading across nodes is exactly the
         // remedy for a model too big for one node, so the single-node check
         // would wrongly reject the thing that solves it.
-        let gpuLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: (await mem.read()).totalGB)
+        let gpuLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: (await mem.read()).totalGB, macosReserveGB: cfg.macosReserveGB)
         if !isSplit && model.sizeGB > gpuLimit * 0.95 {
             let w = String(format: "%.0f", model.sizeGB)
             let lim = String(format: "%.0f", gpuLimit)
@@ -352,7 +352,7 @@ public actor EngineActor {
         var engine: RunningEngine
         if node == "local" {
             let port = nextPort(cfg)
-            let cacheTokens = await cacheForSpawn(model)
+            let cacheTokens = await cacheForSpawn(model, macosReserveGB: cfg.macosReserveGB)
             var args = [
                 "-m", model.gguf,
                 "--alias", model.name,
@@ -475,7 +475,7 @@ public actor EngineActor {
             return existing
         }
         try await evictIfNeeded(for: model, cfg: cfg)
-        let cacheTokens = await cacheForSpawn(model)
+        let cacheTokens = await cacheForSpawn(model, macosReserveGB: cfg.macosReserveGB)
         var args = [
             "-m", model.gguf,
             "--alias", model.name,
@@ -590,13 +590,10 @@ public actor EngineActor {
         }
         let key = e.key
         log.info("respawn \(e.model) on \(e.node) (heal)")
-        if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid); ChildPids.shared.remove(e.pid) }
-        else if let n = cfg.node(e.node) {
-            _ = try? await client.json(
-                method: "POST", url: "http://\(n.host):\(n.agentPort)/api/node/runner/kill",
-                body: .object(["model": .string(e.model)]), bearer: cfg.authToken, timeout: 15
-            )
-        }
+        // Force-kill the old process: an engine being healed is often OOM/Metal
+        // stuck and ignores SIGTERM, so a graceful kill would orphan it and the
+        // respawn would double-book the GPU.
+        await killEngine(e, cfg: cfg, force: true)
         engines.removeValue(forKey: key)
         slotUtil.removeValue(forKey: key)
         lastMetrics.removeValue(forKey: key)
@@ -616,11 +613,43 @@ public actor EngineActor {
         }
     }
 
-    public func unload(model: String) async {
+    /// Terminate an engine's process. Local engines (pid > 0) are killed
+    /// directly; remote engines are killed by asking the owning node agent.
+    /// `force` skips the graceful wait and SIGKILLs immediately — for a
+    /// Metal/OOM-stuck llama-server that ignores SIGTERM.
+    public func killEngine(_ e: RunningEngine, cfg: ConfigSnapshot, force: Bool = false) async {
+        if e.pid > 0 {
+            await Self.terminate(pid: e.pid, force: force)
+            managed.removeValue(forKey: e.pid)
+            ChildPids.shared.remove(e.pid)
+        } else if e.node != "local", let n = cfg.node(e.node) {
+            _ = try? await client.json(
+                method: "POST",
+                url: "http://\(n.host):\(n.agentPort)/api/node/runner/kill",
+                body: .object(["model": .string(e.model), "force": .bool(force)]),
+                bearer: cfg.authToken, timeout: 20
+            )
+        }
+    }
+
+    /// SIGTERM, a short grace period to flush, then SIGKILL any survivor.
+    /// `force` → SIGKILL immediately. Returns once the pid is gone (or 6s).
+    static func terminate(pid: Int32, force: Bool) async {
+        if force { kill(pid, SIGKILL); return }
+        kill(pid, SIGTERM)
+        for _ in 0..<24 {
+            if kill(pid, 0) != 0 { return }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+    }
+
+    public func unload(model: String, cfg: ConfigSnapshot, force: Bool = false) async {
         for (key, e) in engines where e.model == model {
-            log.info("unload \(model) (pid \(e.pid), node \(e.node), port \(e.port))")
+            log.info("unload \(model) (pid \(e.pid), node \(e.node), port \(e.port), force \(force))")
             engines.removeValue(forKey: key)
-            if e.pid > 0 { kill(e.pid, SIGTERM); managed.removeValue(forKey: e.pid); ChildPids.shared.remove(e.pid) }
+            await killEngine(e, cfg: cfg, force: force)
+            usedPorts.remove(e.port)
             slotUtil.removeValue(forKey: key)
             lastMetrics.removeValue(forKey: key)
             await events.publish("model.unloaded", [
@@ -632,8 +661,37 @@ public actor EngineActor {
         }
     }
 
+    /// Force-kill whatever llama-server is listening on `port` on this host,
+    /// even if the daemon no longer tracks it (an orphan from a crashed or
+    /// half-killed load). Returns the pid it killed, or nil if nothing was
+    /// listening. Used to reclaim GPU held by untracked servers.
+    @discardableResult
+    public func forceKillPort(_ port: Int) async -> Int32? {
+        guard let pid = Self.listenerPid(onPort: port) else { return nil }
+        log.info("force-kill orphan on port \(port) (pid \(pid))")
+        kill(pid, SIGKILL)
+        ChildPids.shared.remove(pid)
+        return pid
+    }
+
+    /// Find the pid listening on a TCP port via `lsof` (nil if none).
+    static func listenerPid(onPort port: Int) -> Int32? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        p.arguments = ["-Pan", "-tiTCP:\(port)", "-sTCP:LISTEN"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        p.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let text = String(data: data, encoding: .utf8)?
+            .split(separator: "\n").first.map { Int32($0.trimmingCharacters(in: .whitespaces)) ?? 0 } ?? 0
+        return text > 0 ? text : nil
+    }
+
     private func evictIfNeeded(for model: CatalogModel, cfg: ConfigSnapshot) async throws {
-        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: (await mem.read()).totalGB)
+        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: (await mem.read()).totalGB, macosReserveGB: cfg.macosReserveGB)
         var guardCount = engines.count
         while guardCount > 0 {
             guardCount -= 1
@@ -668,10 +726,10 @@ public actor EngineActor {
     /// an even share of the headroom budget (weights excluded when the
     /// model is not yet resident, headroom kept for the OS), clamped to
     /// [2048, model.ctx] per slot.
-    public func cacheTokens(for model: CatalogModel, loaded: Bool) async -> Int {
+    public func cacheTokens(for model: CatalogModel, loaded: Bool, macosReserveGB: Double = 0) async -> Int {
         let info = await mem.read()
         let free = loaded ? info.freeGB : info.freeGB - model.sizeGB
-        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: info.totalGB)
+        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: info.totalGB, macosReserveGB: macosReserveGB)
         let residentGPU = residentGPUFootprintGB(excluding: model.name)
         return Self.sizedCacheTokens(
             freeGB: free, gpuLimitGB: limit, residentGPU: residentGPU,
@@ -692,14 +750,20 @@ public actor EngineActor {
     /// Pure GPU+RAM-aware KV sizing (no actor state) — the math behind
     /// `cacheTokens`, extracted so it can be unit-tested. Every slot gets an
     /// even share of the smaller of the RAM headroom and the GPU wired-limit
-    /// headroom (after weights), clamped to [2048, ctx] per slot.
+    /// headroom (after weights AND a compute-buffer reserve), clamped to
+    /// [2048, ctx] per slot.
     static func sizedCacheTokens(freeGB: Double, gpuLimitGB: Double, residentGPU: Double,
                                 sizeGB: Double, slots: Int, kvMBPer1k: Double, ctx: Int) -> Int {
         let slots = max(1, slots)
         let kv = kvMBPer1k > 0 ? kvMBPer1k : 100.0
         let ramBudgetMB = max(2048.0, (freeGB - 2.0) * 1024.0)
         var perSlot = Int(ramBudgetMB / Double(slots) / kv) * 1024
-        let gpuHeadroomGB = gpuLimitGB * 0.92 - residentGPU - sizeGB
+        // Reserve room for Metal compute buffers + graph reuse + speculative
+        // scratch that the weights+KV estimate doesn't cover. Without it a
+        // fully-utilized engine tips the wired limit into an OOM. Scales
+        // with the model's weight size (bigger model → bigger compute).
+        let computeReserveGB = max(8.0, sizeGB * 0.25)
+        let gpuHeadroomGB = gpuLimitGB * 0.92 - residentGPU - sizeGB - computeReserveGB
         if gpuHeadroomGB < 0 {
             perSlot = 2048
         } else {
@@ -804,15 +868,15 @@ public actor EngineActor {
         return .array(out)
     }
 
-    private func cacheForSpawn(_ model: CatalogModel) async -> Int {
+    private func cacheForSpawn(_ model: CatalogModel, macosReserveGB: Double = 0) async -> Int {
         if let o = cacheOverrides[model.name] { return o }
-        return await cacheTokens(for: model, loaded: false)
+        return await cacheTokens(for: model, loaded: false, macosReserveGB: macosReserveGB)
     }
 
     /// Dashboard view of the current cache target for a model.
-    public func currentCacheTarget(_ model: CatalogModel) async -> Int {
+    public func currentCacheTarget(_ model: CatalogModel, macosReserveGB: Double = 0) async -> Int {
         if let o = cacheOverrides[model.name] { return o }
-        return await cacheTokens(for: model, loaded: true)
+        return await cacheTokens(for: model, loaded: true, macosReserveGB: macosReserveGB)
     }
 
     private func reTuneCache(_ e: RunningEngine, desired: Int, cfg: ConfigSnapshot) async {
@@ -914,7 +978,7 @@ public actor EngineActor {
                     let busy = await self.lastBusyAt[e.key].map { Date().timeIntervalSince($0) < 90 } ?? false
                     let tunedRecently = await self.lastCacheTune[e.key].map { Date().timeIntervalSince($0) < 600 } ?? false
                     if busy || tunedRecently { continue }
-                    let desired = await self.cacheTokens(for: model, loaded: true)
+                    let desired = await self.cacheTokens(for: model, loaded: true, macosReserveGB: cfgNow.macosReserveGB)
                     let cur = max(1, e.ctx)
                     let delta = Double(abs(desired - cur)) / Double(max(desired, cur))
                     guard delta > 0.35 else { continue }

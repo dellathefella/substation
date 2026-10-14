@@ -56,14 +56,30 @@ final class CoreLogicTests: XCTestCase {
     }
 
     func testCacheGPUPressureShrinksKV() {
-        // A big model already resident squeezes the new model's KV well below ctx.
+        // A big model already resident squeezes the new model's KV below ctx
+        // but still leaves a usable minimum. (resident=140 keeps the headroom
+        // positive after the compute-buffer reserve.)
         let plenty = sized(free: 200, limit: 192, resident: 0, size: 20, slots: 4, kv: 24, ctx: 262_144)
-        let squeezed = sized(free: 200, limit: 192, resident: 150, size: 20, slots: 4, kv: 24, ctx: 262_144)
+        let squeezed = sized(free: 200, limit: 192, resident: 140, size: 20, slots: 4, kv: 24, ctx: 262_144)
         XCTAssertLessThan(squeezed, plenty, "resident GPU must reduce the KV allocation")
         XCTAssertGreaterThan(squeezed, 2048 * 4, "still leaves a usable minimum")
-        // ~290k for these inputs; assert a band to stay robust to float rounding.
-        XCTAssertGreaterThan(squeezed, 250_000)
-        XCTAssertLessThan(squeezed, 320_000)
+        // ~377k for these inputs; assert a band to stay robust to float rounding.
+        XCTAssertGreaterThan(squeezed, 340_000)
+        XCTAssertLessThan(squeezed, 410_000)
+    }
+
+    func testComputeReserveKeepsBigModelUnderWiredLimit() {
+        // flash-next's real corrected config: 100 GB weights, q8_0 KV (54 MiB/1k),
+        // 262k ctx × 4 slots. With the compute reserve, weights + full KV +
+        // reserve must stay under 0.92 × the 230 GB wired limit.
+        let total = sized(free: 200, limit: 230, resident: 0, size: 100, slots: 4, kv: 54, ctx: 262_144)
+        let kvGB = (Double(total) / 1024.0) * 54.0 / 1024.0
+        let reserve = max(8.0, 100.0 * 0.25)
+        let projected = 100.0 + kvGB + reserve
+        XCTAssertLessThanOrEqual(projected, 230.0 * 0.92,
+                                "weights + KV + compute reserve must fit the wired budget")
+        // And it still keeps the full 262k context (the reserve doesn't bite here).
+        XCTAssertEqual(total, 262_144 * 4)
     }
 
     func testCacheWeightsBlowBudgetFallsToMinimum() {

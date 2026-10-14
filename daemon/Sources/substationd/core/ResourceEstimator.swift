@@ -40,12 +40,21 @@ public enum ResourceEstimator {
     }
 
     /// sysctl iogpu.wired_limit_mb (MB); 0/unset → 75% of RAM (Apple Silicon default).
-    public static func gpuWiredLimitGB(totalGB: Double) -> Double {
+    /// When `macosReserveGB` > 0, the operator is asking to reserve that much RAM
+    /// for macOS and give the GPU the rest — but we clamp to the kernel's real
+    /// wired limit so a reserve that exceeds an un-raised sysctl can't cause an
+    /// OOM (the operator must `sudo sysctl -w iogpu.wired_limit_mb=…` to unlock
+    /// anything above the current kernel limit).
+    public static func gpuWiredLimitGB(totalGB: Double, macosReserveGB: Double = 0) -> Double {
         var mb: Int32 = 0
         var len = MemoryLayout<Int32>.size
         let kr = sysctlbyname("iogpu.wired_limit_mb", &mb, &len, nil, 0)
-        if kr == 0, mb > 0 { return Double(mb) / 1024.0 }
-        return totalGB * 0.75
+        let kernelLimit = (kr == 0 && mb > 0) ? Double(mb) / 1024.0 : totalGB * 0.75
+        if macosReserveGB > 0 {
+            let desired = max(8.0, totalGB - macosReserveGB)
+            return min(desired, kernelLimit)
+        }
+        return kernelLimit
     }
 
     /// Per-node memory budget for a model split across `nodeCount` nodes

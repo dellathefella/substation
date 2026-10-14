@@ -89,6 +89,7 @@ extension NodeKit {
             "ram_used_gb": .jDouble(((mem.totalGB - mem.freeGB) * 100).rounded() / 100),
             "ram_total_gb": .jDouble((mem.totalGB * 100).rounded() / 100),
             "gpu_pct": .jDouble(0),
+            "gpu_wired_limit_gb": .jDouble((ResourceEstimator.gpuWiredLimitGB(totalGB: mem.totalGB, macosReserveGB: snap.macosReserveGB) * 100).rounded() / 100),
             "runners": .array(runners),
             "rpc_up": .bool(rpcUp),
             "catalog": .array(catalog),
@@ -205,8 +206,24 @@ public enum NodeRoutes {
             try await NodeKit.auth(req, kit)
             let body = try await Routes.jsonBody(req)
             let model = body["model"]?.stringValue ?? ""
-            await kit.engines.unload(model: model)
-            return jsonResponse(.object(["killed": .bool(true), "model": .string(model)]))
+            let force = body["force"]?.boolValue ?? false
+            let cfg = await kit.cfg.snapshot
+            await kit.engines.unload(model: model, cfg: cfg, force: force)
+            return jsonResponse(.object(["killed": .bool(true), "model": .string(model), "force": .bool(force)]))
+        }
+
+        // Force-kill whatever llama-server holds a port on this node, even if
+        // the daemon no longer tracks it (orphan from a crash / half-kill).
+        app.on(.POST, "api", "node", "runner", "kill_port", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await NodeKit.auth(req, kit)
+            let body = try await Routes.jsonBody(req)
+            let port = body["port"]?.intValue ?? 0
+            guard port > 0 else { throw APIError.badRequest("port required") }
+            let killed = await kit.engines.forceKillPort(port)
+            return jsonResponse(.object([
+                "port": .jInt(port),
+                "killed_pid": killed.map { JSONValue.jInt(Int($0)) } ?? .null,
+            ]))
         }
 
         app.on(.POST, "api", "admin", "restart", body: .collect(maxSize: "1mb")) { req async throws -> Response in

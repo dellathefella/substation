@@ -119,6 +119,13 @@ public struct ConfigSnapshot: Sendable {
     public var startupTimeoutS: Int { tree["engines"]?["startup_timeout_s"]?.intValue ?? 180 }
     public var idleEvictSeconds: Int { tree["engines"]?["idle_evict_seconds"]?.intValue ?? 900 }
     public var minFreeRamGB: Double { tree["engines"]?["min_free_ram_gb"]?.doubleValue ?? 8 }
+    /// Reserve this much RAM for macOS and let the GPU have the rest. When > 0
+    /// it overrides the kernel's `iogpu.wired_limit_mb` for the guard's
+    /// budget — but never above what the kernel will actually wire (the guard
+    /// clamps to the real sysctl so an un-raised limit can't cause an OOM).
+    /// To unlock the full value the operator must also raise the sysctl:
+    ///   sudo sysctl -w iogpu.wired_limit_mb=<GB*1024>
+    public var macosReserveGB: Double { tree["engines"]?["macos_reserve_gb"]?.doubleValue ?? 0 }
     public var defaultCtx: Int { tree["engines"]?["default_ctx"]?.intValue ?? 8192 }
 
     public var metricsSampleMs: Int { tree["metrics"]?["sample_interval_ms"]?.intValue ?? 1000 }

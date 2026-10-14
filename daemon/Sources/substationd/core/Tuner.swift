@@ -52,7 +52,7 @@ public enum Tuner {
 
     public static func analyze(cfg: ConfigSnapshot, mem: Memory, nodes: NodesActor) async -> Report {
         let local = await mem.read()
-        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: local.totalGB)
+        let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: local.totalGB, macosReserveGB: cfg.macosReserveGB)
         let peers = await nodes.allNodes().map(\.id)
         var peerFree: [String: Double] = [:]
         for p in peers { if let f = await nodes.freeGB(p) { peerFree[p] = f } }

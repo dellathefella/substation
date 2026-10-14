@@ -21,6 +21,11 @@ default_ctx = 262144.0
 idle_evict_seconds = 900.0
 llama_server = "/Users/jdella/llamacpp-src/build/bin/llama-server"
 min_free_ram_gb = 8.0
+# Reserve this much RAM for macOS; the GPU budget becomes totalRAM - this,
+# clamped to the kernel's iogpu.wired_limit_mb. To actually unlock the full
+# 240 GB (256 - 16) the operator must raise the kernel limit:
+#   sudo sysctl -w iogpu.wired_limit_mb=245760
+macos_reserve_gb = 16.0
 rpc_server = "/Users/jdella/llamacpp-src/build/bin/ggml-rpc-server"
 startup_timeout_s = 180.0
 
@@ -81,20 +86,20 @@ ctx = 262144.0
 enabled = true
 flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap+mlock", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--ubatch-size", "1024"]
 gguf = "/Volumes/SANDISK1TB/models/qwen3.5-35b-a3b/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf"
-kv_mb_per_1k_ctx = 24.0
+kv_mb_per_1k_ctx = 45.0
 name = "qwen3.5-35b-a3b"
 node = "studio0"
 reasoning = true
-size_gb = 20.0
+size_gb = 21.0
 tier = "fast"
 
 [[models]]
 ctx = 262144.0
 enabled = true
-flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap+mlock", "--cache-type-k", "f16", "--cache-type-v", "f16", "--ubatch-size", "4096", "--spec-type", "ngram-cache", "--lookup-cache-dynamic", "/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/lookup-dynamic.bin", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0"]
+flags = ["--flash-attn", "on", "--batch-size", "4096", "-ngl", "999", "--timeout", "1800", "--load-mode", "mmap+mlock", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--ubatch-size", "4096", "--spec-type", "ngram-cache", "--lookup-cache-dynamic", "/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/lookup-dynamic.bin", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0"]
 gguf = "/Volumes/SANDISK1TB/models/Qwen3.8-Flash-Next-IQ4_NL/Qwen3.8-Flash-Next-IQ4_NL-00001-of-00002.gguf"
-kv_mb_per_1k_ctx = 24.0
+kv_mb_per_1k_ctx = 54.0
 name = "qwen3.8-flash-next"
 node = "studio0"
-size_gb = 150.0
+size_gb = 100.0
 tier = "smart"

@@ -198,7 +198,7 @@ public enum Routes {
             let state = await kit.state.state()
             let uptime = await kit.state.uptimeS()
             let resident = engines.reduce(0.0) { $0 + $1.sizeGB }
-            let gpuLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: mem.totalGB)
+            let gpuLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: mem.totalGB, macosReserveGB: cfg.macosReserveGB)
             let ramUsed = mem.totalGB - mem.freeGB
             let pressure: String
             if mem.freeGB < cfg.minFreeRamGB || ramUsed > gpuLimit { pressure = "critical" }
@@ -359,8 +359,35 @@ public enum Routes {
         app.on(.POST, "api", "models", ":name", "unload", body: .collect(maxSize: "1mb")) { req async throws -> Response in
             try await auth(req, kit)
             let name = req.parameters.get("name") ?? ""
-            await kit.engines.unload(model: name)
-            return jsonResponse(.object(["unloaded": .bool(true), "model": .string(name)]))
+            let cfg = await kit.cfg.snapshot
+            let body = (try? await Routes.jsonBody(req)) ?? .object([:])
+            let force = body["force"]?.boolValue ?? false
+            await kit.engines.unload(model: name, cfg: cfg, force: force)
+            return jsonResponse(.object(["unloaded": .bool(true), "model": .string(name), "force": .bool(force)]))
+        }
+
+        // Force-kill a llama-server by port on a node — for an orphan the
+        // daemon no longer tracks (crashed / half-killed load still holding
+        // GPU). Proxies to the node agent's kill_port.
+        app.on(.POST, "api", "nodes", ":id", "force-kill-port", body: .collect(maxSize: "1mb")) { req async throws -> Response in
+            try await auth(req, kit)
+            let id = req.parameters.get("id") ?? ""
+            let cfg = await kit.cfg.snapshot
+            guard let n = cfg.node(id) else { throw APIError.notFound("node \(id)") }
+            let body = try await Routes.jsonBody(req)
+            let port = body["port"]?.intValue ?? 0
+            guard port > 0 else { throw APIError.badRequest("port required") }
+            do {
+                let (status, val) = try await kit.client.json(
+                    method: "POST",
+                    url: "http://\(n.host):\(n.agentPort)/api/node/runner/kill_port",
+                    body: .object(["port": .jInt(port)]),
+                    bearer: cfg.authToken, timeout: 15
+                )
+                if status >= 400 { throw APIError.upstream("node \(id) kill_port HTTP \(status)") }
+                return jsonResponse(val ?? .object(["killed_pid": .null]))
+            } catch let e as APIError { throw e }
+            catch { throw APIError.upstream("\(error)") }
         }
 
         // Restart a loaded engine in place (kill + respawn same placement).
@@ -421,7 +448,7 @@ public enum Routes {
             let mem = await kit.mem.read()
             let live = await kit.engines.list()
             let resident = live.reduce(0.0) { $0 + $1.sizeGB }
-            let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: mem.totalGB)
+            let limit = ResourceEstimator.gpuWiredLimitGB(totalGB: mem.totalGB, macosReserveGB: cfg.macosReserveGB)
             let used = mem.totalGB - mem.freeGB
             let pressure: String
             if mem.freeGB < cfg.minFreeRamGB || used > limit { pressure = "critical" }
