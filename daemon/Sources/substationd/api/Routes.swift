@@ -246,6 +246,8 @@ public enum Routes {
                 "resident_gb": .jDouble((residentGPU * 10).rounded() / 10),
                 "headroom_gb": .jDouble(((gpuLimit - residentGPU) * 10).rounded() / 10),
             ])
+            // Same-model load-balancing view (replicas per model).
+            obj["replicas"] = await kit.engines.replicaStatus(cfg: cfg)
             obj["nodes"] = await kit.nodes.nodesJSON()
             // Catalog reconciliation: which local profiles can actually be
             // served by at least one healthy node (or this host if local is on)?

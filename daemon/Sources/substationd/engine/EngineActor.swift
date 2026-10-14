@@ -17,15 +17,21 @@ public struct RunningEngine: Sendable {
     /// KV cache MB per 1k tokens (per slot) — lets the GPU-budget guard
     /// compute this engine's live GPU footprint without a catalog lookup.
     public var kvMBPer1k: Double
+    /// Fraction of the model's weights resident on THIS engine's node.
+    /// 1.0 for single-node; for an RPC split it's the head's tensor-split
+    /// share (e.g. 0.5 for an even 2-way split). Workers hold the rest.
+    public var headWeightFraction: Double
 
     public var key: String { "\(model)@\(node)" }
     public var baseURL: String { "http://\(host):\(port)" }
 
-    /// Approximate GPU (Metal wired) footprint: weights + KV + a fixed
-    /// runtime overhead. `ctx` is the total KV tokens handed to the server.
+    /// Approximate GPU (Metal wired) footprint on this engine's node:
+    /// the weights actually resident here (full for single-node, the head's
+    /// shard for a split) + the KV cache (always head-only) + fixed overhead.
     public var gpuFootprintGB: Double {
+        let weights = sizeGB * headWeightFraction
         let kvGB = (Double(ctx) / 1024.0) * kvMBPer1k / 1024.0
-        return sizeGB + kvGB + 1.0
+        return weights + kvGB + 1.0
     }
 }
 
@@ -57,6 +63,10 @@ public actor EngineActor {
     private var cacheOverrides: [String: Int] = [:]
     private var lastBusyAt: [String: Date] = [:]
     private var lastCacheTune: [String: Date] = [:]
+    /// Load-balancing affinity: session key → the replica engine key it last
+    /// used, so a multi-turn chat keeps hitting the same copy (KV reuse) and
+    /// only spills to a freer copy when the pinned one saturates. TTL-pruned.
+    private var sessionReplica: [String: (key: String, at: Date)] = [:]
     /// PID of an rpc-server we did NOT spawn but adopted (orphan listener).
     private var rpcAdoptedPid: Int32 = 0
     /// Every child process we spawned (triage, rpc-server, engines). Kept so the
@@ -301,8 +311,11 @@ public actor EngineActor {
         // Hard guard: if this model's weights alone exceed the GPU wired limit
         // (even with every other model evicted), spawning it would OOM the GPU.
         // Fail fast with a clear, actionable error instead of crashing Metal.
+        // Skipped for split placements — spreading across nodes is exactly the
+        // remedy for a model too big for one node, so the single-node check
+        // would wrongly reject the thing that solves it.
         let gpuLimit = ResourceEstimator.gpuWiredLimitGB(totalGB: (await mem.read()).totalGB)
-        if model.sizeGB > gpuLimit * 0.95 {
+        if !isSplit && model.sizeGB > gpuLimit * 0.95 {
             let w = String(format: "%.0f", model.sizeGB)
             let lim = String(format: "%.0f", gpuLimit)
             throw EngineError.tooLarge(
@@ -354,14 +367,16 @@ public actor EngineActor {
             if model.cacheIdleSlots && model.cacheRamMiB != 0 {
                 args.append("--cache-idle-slots")
             }
+            let splitWeights: [String] = isSplit
+                ? (model.tensorSplit.isEmpty
+                    ? ["1"] + splitPeers.map { _ in "1" }
+                    : model.tensorSplit.split(separator: ",").map(String.init))
+                : ["1"]
             if isSplit {
                 let rpc = splitPeers.compactMap { peer in
                     cfg.node(peer).map { "\($0.rpcHost):\($0.rpcPort)" }
                 }
-                let weights = model.tensorSplit.isEmpty
-                    ? (["1"] + splitPeers.map { _ in "1" }).joined(separator: ",")
-                    : model.tensorSplit
-                args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", weights]
+                args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", splitWeights.joined(separator: ",")]
             }
             args += model.flags
             if let mm = model.mmproj, FileManager.default.fileExists(atPath: mm) {
@@ -373,7 +388,8 @@ public actor EngineActor {
                 model: model.name, node: "local", host: "127.0.0.1", port: port,
                 pid: pid, split: isSplit, rpcPeers: splitPeers, placement: model.placement,
                 loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens,
-                kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
+                kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0,
+                headWeightFraction: Self.headWeightFraction(splitWeights: splitWeights)
             )
             usedPorts.insert(port)
             do { try await waitReady(engine, cfg: cfg) } catch {
@@ -385,14 +401,16 @@ public actor EngineActor {
         } else {
             guard let n = cfg.node(node) else { throw EngineError.notFound("node \(node)") }
             let port = nextPort(cfg, remote: true)
+            let splitWeights: [String] = isSplit
+                ? (model.tensorSplit.isEmpty
+                    ? ["1"] + splitPeers.map { _ in "1" }
+                    : model.tensorSplit.split(separator: ",").map(String.init))
+                : ["1"]
             let spawnBody: JSONValue = .object([
                 "model": .string(model.name),
                 "port": .jInt(port),
                 "rpc": .array(splitPeers.compactMap { cfg.node($0) }.map { .string("\($0.rpcHost):\($0.rpcPort)") }),
-                "tensor_split": .array((model.tensorSplit.isEmpty
-                    ? ["1"] + splitPeers.map { _ in "1" }
-                    : model.tensorSplit.split(separator: ",").map(String.init)
-                ).map { JSONValue.string($0) }),
+                "tensor_split": .array(splitWeights.map { JSONValue.string($0) }),
             ])
             let status: Int
             let spawned: JSONValue?
@@ -412,12 +430,14 @@ public actor EngineActor {
             // The node may return an already-running engine on a different port
             // than we requested — always adopt the node's actual port.
             let actualPort = spawned?["port"]?.intValue ?? port
+            let actualCtx = spawned?["ctx"]?.intValue ?? model.ctx
             log.info("remote spawn \(model.name) on node \(node) ok (adopted port \(actualPort))")
             engine = RunningEngine(
                 model: model.name, node: node, host: n.host, port: actualPort,
                 pid: 0, split: isSplit, rpcPeers: splitPeers, placement: model.placement,
-                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: model.ctx,
-                kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
+                loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: actualCtx,
+                kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0,
+                headWeightFraction: Self.headWeightFraction(splitWeights: splitWeights)
             )
         }
 
@@ -477,7 +497,8 @@ public actor EngineActor {
             model: model.name, node: "local", host: HostInfo.primaryIP(), port: port,
             pid: pid, split: !rpc.isEmpty, rpcPeers: rpc, placement: model.placement,
             loadedAt: Date(), lastUsed: Date(), sizeGB: model.sizeGB, ctx: cacheTokens,
-            kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0
+            kvMBPer1k: model.kvMBPer1k > 0 ? model.kvMBPer1k : 100.0,
+            headWeightFraction: Self.headWeightFraction(splitWeights: tensorSplit)
         )
         usedPorts.insert(port)
         do { try await waitReady(engine, cfg: cfg) } catch {
@@ -652,6 +673,16 @@ public actor EngineActor {
         )
     }
 
+    /// Head's share of the weights from a tensor-split spec ("1,2" → 1/3).
+    /// Returns 1.0 for a single weight (non-split) or a degenerate spec.
+    static func headWeightFraction(splitWeights: [String]) -> Double {
+        let w = splitWeights.compactMap { Double($0) }
+        guard w.count > 1 else { return 1.0 }
+        let total = w.reduce(0, +)
+        guard total > 0, let head = w.first, head > 0 else { return 1.0 }
+        return head / total
+    }
+
     /// Pure GPU+RAM-aware KV sizing (no actor state) — the math behind
     /// `cacheTokens`, extracted so it can be unit-tested. Every slot gets an
     /// even share of the smaller of the RAM headroom and the GPU wired-limit
@@ -680,6 +711,91 @@ public actor EngineActor {
             if let ex = excluding, e.model == ex { return acc }
             return acc + e.gpuFootprintGB
         }
+    }
+
+    // MARK: - Same-model load balancing
+
+    /// Loaded, non-split copies of a model (one per node), for load balancing.
+    public func replicas(of model: String) -> [RunningEngine] {
+        engines.values.filter { $0.model == model && !$0.split }
+    }
+
+    /// Free KV slots on an engine right now. Falls back to the catalog slot
+    /// count when utilization hasn't been sampled yet (treat as available).
+    private func freeSlots(_ e: RunningEngine, cfg: ConfigSnapshot) -> Int {
+        if let u = slotUtil[e.key] { return max(0, u.slots - u.used) }
+        return cfg.model(e.model)?.slots ?? 1
+    }
+
+    /// Load-balance a replicated model (one copy per node). Picks the
+    /// least-loaded resident copy, honoring session affinity (a chat stays on
+    /// the copy it last used for KV reuse) but spilling to a freer copy when
+    /// the pinned one saturates. When no copy has capacity it loads a fresh
+    /// one on a target node that doesn't already host the model, so replicas
+    /// scale out under load.
+    public func selectReplica(_ model: CatalogModel, cfg: ConfigSnapshot, sessionKey: String?) async throws -> RunningEngine {
+        let targets = model.nodes.isEmpty ? [model.node ?? "local"] : model.nodes
+        let loaded = replicas(of: model.name).filter { targets.contains($0.node) }
+
+        // 1) Session affinity: reuse the pinned copy if it still has a free slot.
+        if let sk = sessionKey, let pinned = sessionReplica[sk]?.key,
+           let eng = engines[pinned], loaded.contains(where: { $0.key == pinned }),
+           freeSlots(eng, cfg: cfg) > 0 {
+            sessionReplica[sk] = (eng.key, Date())
+            return eng
+        }
+        // 2) Least-loaded resident copy with a free slot.
+        if let best = loaded.filter({ freeSlots($0, cfg: cfg) > 0 })
+            .max(by: { freeSlots($0, cfg: cfg) < freeSlots($1, cfg: cfg) }) {
+            if let sk = sessionKey { sessionReplica[sk] = (best.key, Date()) }
+            return best
+        }
+        // 3) All resident copies saturated → scale out on a target node that
+        //    doesn't host one yet.
+        let loadedNodes = Set(loaded.map { $0.node })
+        if let fresh = targets.first(where: { !loadedNodes.contains($0) }) {
+            let eng = try await ensureLoaded(model, placement: Placement.node(fresh), cfg: cfg)
+            if let sk = sessionKey { sessionReplica[sk] = (eng.key, Date()) }
+            return eng
+        }
+        // 4) Every target already hosts a copy but all are saturated → use the
+        //    least-loaded one (over-subscribe) rather than fail.
+        let least = loaded.min(by: { freeSlots($0, cfg: cfg) < freeSlots($1, cfg: cfg) }) ?? loaded[0]
+        if let sk = sessionKey { sessionReplica[sk] = (least.key, Date()) }
+        return least
+    }
+
+    /// Drop session→replica affinities older than `ttl` (called from the
+    /// metrics loop so the map can't grow unbounded).
+    public func pruneSessionAffinity(ttl: TimeInterval) {
+        let now = Date()
+        sessionReplica = sessionReplica.filter { now.timeIntervalSince($0.value.at) < ttl }
+    }
+
+    /// Per-model replica view for the dashboard: each model's loaded copies
+    /// with their node/port/slot load, plus the configured replica target.
+    public func replicaStatus(cfg: ConfigSnapshot) -> JSONValue {
+        var byModel: [String: [RunningEngine]] = [:]
+        for e in engines.values where !e.split { byModel[e.model, default: []].append(e) }
+        var out: [JSONValue] = []
+        for (model, copies) in byModel.sorted(by: { $0.key < $1.key }) {
+            let target = max(1, cfg.model(model)?.nodes.count ?? 1)
+            let copiesJSON = copies.sorted { $0.node < $1.node }.map { e -> JSONValue in
+                let u = slotUtil[e.key]
+                return .object([
+                    "node": .string(e.node), "port": .jInt(e.port),
+                    "used": .jInt(u?.used ?? 0), "slots": .jInt(u?.slots ?? 0),
+                    "free": .jInt(freeSlots(e, cfg: cfg)),
+                ])
+            }
+            out.append(.object([
+                "model": .string(model),
+                "replicas_loaded": .jInt(copies.count),
+                "replicas_target": .jInt(target),
+                "copies": .array(copiesJSON),
+            ]))
+        }
+        return .array(out)
     }
 
     private func cacheForSpawn(_ model: CatalogModel) async -> Int {
@@ -732,6 +848,7 @@ public actor EngineActor {
             while true {
                 try? await Task.sleep(for: .seconds(60))
                 await self.trimEngineLogs()
+                await self.pruneSessionAffinity(ttl: 1800)
             }
         }
     }

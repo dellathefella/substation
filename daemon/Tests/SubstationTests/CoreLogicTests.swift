@@ -22,7 +22,8 @@ final class CoreLogicTests: XCTestCase {
         let e = RunningEngine(
             model: "m", node: "local", host: "127.0.0.1", port: 1, pid: 1,
             split: false, rpcPeers: [], placement: "local",
-            loadedAt: Date(), lastUsed: Date(), sizeGB: 20, ctx: 1_048_576, kvMBPer1k: 24
+            loadedAt: Date(), lastUsed: Date(), sizeGB: 20, ctx: 1_048_576, kvMBPer1k: 24,
+            headWeightFraction: 1.0
         )
         // KV GB = (1048576/1024) * 24 / 1024 = 1024 * 24 / 1024 = 24 GB
         // footprint = weights(20) + kv(24) + overhead(1) = 45
@@ -33,7 +34,8 @@ final class CoreLogicTests: XCTestCase {
         let e = RunningEngine(
             model: "m", node: "local", host: "127.0.0.1", port: 1, pid: 1,
             split: false, rpcPeers: [], placement: "local",
-            loadedAt: Date(), lastUsed: Date(), sizeGB: 4, ctx: 8192, kvMBPer1k: 100
+            loadedAt: Date(), lastUsed: Date(), sizeGB: 4, ctx: 8192, kvMBPer1k: 100,
+            headWeightFraction: 1.0
         )
         // KV GB = (8192/1024)*100/1024 = 8*100/1024 = 0.78125
         XCTAssertEqual(e.gpuFootprintGB, 4 + 0.78125 + 1, accuracy: 0.001)
@@ -169,12 +171,55 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertTrue(diffs.isEmpty, "identical configs should produce no diffs: \(diffs)")
     }
 
+    // MARK: - RPC/split head-weight fraction
+
+    func testHeadWeightFraction() {
+        XCTAssertEqual(EngineActor.headWeightFraction(splitWeights: ["1"]), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(EngineActor.headWeightFraction(splitWeights: ["1", "1"]), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(EngineActor.headWeightFraction(splitWeights: ["1", "2"]), 1.0 / 3.0, accuracy: 0.0001)
+        XCTAssertEqual(EngineActor.headWeightFraction(splitWeights: ["2", "1", "1"]), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(EngineActor.headWeightFraction(splitWeights: []), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(EngineActor.headWeightFraction(splitWeights: ["0", "1"]), 1.0, accuracy: 0.0001, "degenerate head weight → full")
+    }
+
+    func testSplitHeadFootprintUsesShard() {
+        // 150 GB model, even 2-way split → head holds 75 GB weights + KV.
+        let e = RunningEngine(
+            model: "big", node: "studio0", host: "h", port: 1, pid: 1,
+            split: true, rpcPeers: ["studio1"], placement: "split:studio0+studio1",
+            loadedAt: Date(), lastUsed: Date(), sizeGB: 150, ctx: 1_048_576,
+            kvMBPer1k: 24, headWeightFraction: 0.5
+        )
+        // weights 75 + kv 24 + overhead 1 = 100 (not 175 as full-size would give)
+        XCTAssertEqual(e.gpuFootprintGB, 75 + 24 + 1, accuracy: 0.001)
+    }
+
+    // MARK: - nodes / replication parsing
+
+    func testNodesAndReplicatedParsing() {
+        let tree = TOML.parse("""
+        [[models]]
+        name = "single"
+        node = "studio0"
+        [[models]]
+        name = "replicated"
+        nodes = ["studio0", "studio1"]
+        """)
+        let cfg = ConfigSnapshot(raw: tree)
+        let single = cfg.model("single")!
+        XCTAssertEqual(single.nodes, ["studio0"])
+        XCTAssertFalse(single.isReplicated)
+        let rep = cfg.model("replicated")!
+        XCTAssertEqual(rep.nodes, ["studio0", "studio1"])
+        XCTAssertTrue(rep.isReplicated)
+    }
+
     // MARK: - Helpers
 
     private func makeModel(name: String, sizeGB: Double, ctx: Int, slots: Int, kv: Double) -> CatalogModel {
         CatalogModel(
             name: name, gguf: "/tmp/\(name).gguf", dir: nil, file: nil, tier: "balanced",
-            sizeGB: sizeGB, ctx: ctx, placement: "local", node: nil, kind: "local",
+            sizeGB: sizeGB, ctx: ctx, placement: "local", node: nil, nodes: [], kind: "local",
             baseUrl: nil, apiKey: nil, remoteModel: nil, proto: "openai", flags: [],
             kvMBPer1k: kv, slots: slots, mmproj: nil, vision: false, enabled: true,
             tensorSplit: "", cacheReuse: 256, cacheRamMiB: 8192, cacheIdleSlots: true,

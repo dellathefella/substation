@@ -294,6 +294,22 @@ export function ClusterStatus(): React.JSX.Element {
           </span>
         </div>
       ) : null}
+      {st?.replicas && st.replicas.some((r) => r.replicas_target > 1 || r.replicas_loaded > 1) ? (
+        <div className="lb-block" style={{ margin: '4px 0 10px' }}>
+          <div className="dim" style={{ marginBottom: 4 }}>Load balancing</div>
+          {st.replicas.filter((r) => r.replicas_target > 1 || r.replicas_loaded > 1).map((r) => (
+            <div key={r.model} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+              <span className="mono" style={{ minWidth: 150 }}>{r.model}</span>
+              <span className="dim" style={{ minWidth: 70 }}>{r.replicas_loaded}/{r.replicas_target} copies</span>
+              {r.copies.map((c) => (
+                <span key={`${c.node}:${c.port}`} className="dim" title={`${c.used}/${c.slots} slots used`}>
+                  {c.node}: {c.free}/{c.slots} free
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="node-grid">
         {mem && mem.local_enabled !== false ? (
           <div className="node-card">

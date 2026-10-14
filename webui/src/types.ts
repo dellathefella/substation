@@ -116,6 +116,12 @@ export interface DaemonStatus {
     gpu_footprint_gb?: number;
   }>;
   gpu_budget?: { wired_limit_gb: number; resident_gb: number; headroom_gb: number };
+  replicas?: Array<{
+    model: string;
+    replicas_loaded: number;
+    replicas_target: number;
+    copies: Array<{ node: string; port: number; used: number; slots: number; free: number }>;
+  }>;
   catalog_reconciliation?: {
     profiles: Array<{ profile: string; capable_nodes: string[] }>;
     unservable: string[];

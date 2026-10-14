@@ -14,6 +14,13 @@ public struct CatalogModel: Sendable, Hashable {
     public var placement: String
     /// Node this model resides on (joins placement when placement is unset).
     public var node: String?
+    /// Replica target nodes — one copy per node. When more than one, requests
+    /// for this model load-balance across the loaded copies (least-loaded,
+    /// with session affinity). Derived from the `nodes` array, else the
+    /// single `node`, else empty (→ local placement).
+    public var nodes: [String]
+    /// True when the model is replicated across >1 node for load balancing.
+    public var isReplicated: Bool { nodes.count > 1 }
     /// "local" (llama.cpp on this cluster) | "external" (already-running
     /// server on the LAN) | "remote" (cloud provider; api_key applies).
     public var kind: String
@@ -200,6 +207,8 @@ public struct ConfigSnapshot: Sendable {
                 placement: m["placement"]?.stringValue
                     ?? (m["node"]?.stringValue.map { $0.isEmpty || $0 == "local" ? "local" : "node:\($0)" } ?? "local"),
                 node: m["node"]?.stringValue,
+                nodes: m["nodes"]?.arrayValue?.compactMap { $0.stringValue }
+                    ?? (m["node"]?.stringValue.map { [$0] } ?? []),
                 kind: kind,
                 baseUrl: m["base_url"]?.stringValue.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 },
                 apiKey: m["api_key"]?.stringValue,

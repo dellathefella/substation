@@ -234,7 +234,12 @@ public struct Orchestrator: Sendable {
             let queueWait = await admission.acquire()
             let engine: RunningEngine
             do {
-                engine = try await engines.ensureLoaded(catalog ?? cfg.models[0], placement: placement, cfg: cfg)
+                let cat = catalog ?? cfg.models[0]
+                if cat.isReplicated {
+                    engine = try await engines.selectReplica(cat, cfg: cfg, sessionKey: sessionKey)
+                } else {
+                    engine = try await engines.ensureLoaded(cat, placement: placement, cfg: cfg)
+                }
             } catch {
                 await admission.release()
                 throw error
@@ -503,7 +508,11 @@ public struct Orchestrator: Sendable {
         let t0 = Date()
         let engine: RunningEngine
         do {
-            engine = try await engines.ensureLoaded(finalCatalog, placement: placement, cfg: cfg)
+            if finalCatalog.isReplicated {
+                engine = try await engines.selectReplica(finalCatalog, cfg: cfg, sessionKey: sessionKey)
+            } else {
+                engine = try await engines.ensureLoaded(finalCatalog, placement: placement, cfg: cfg)
+            }
         } catch {
             await admission.release()
             throw error
@@ -562,7 +571,8 @@ public struct Orchestrator: Sendable {
             model: m.name, node: "remote", host: RemoteTarget.host(of: base), port: 0,
             pid: 0, split: false, rpcPeers: [], placement: m.kind,
             loadedAt: now, lastUsed: now, sizeGB: 0, ctx: m.ctx,
-            kvMBPer1k: m.kvMBPer1k > 0 ? m.kvMBPer1k : 100.0
+            kvMBPer1k: m.kvMBPer1k > 0 ? m.kvMBPer1k : 100.0,
+            headWeightFraction: 1.0
         )
     }
 

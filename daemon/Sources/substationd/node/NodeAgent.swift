@@ -192,7 +192,10 @@ public enum NodeRoutes {
                 let e = try await kit.engines.ensureSpawnedLocally(
                     catalog, port: port, rpc: rpc, tensorSplit: ts, cfg: cfg, placement: placement
                 )
-                return jsonResponse(.object(["spawned": .bool(true), "model": .string(model), "port": .jInt(e.port)]))
+                return jsonResponse(.object([
+                    "spawned": .bool(true), "model": .string(model),
+                    "port": .jInt(e.port), "ctx": .jInt(e.ctx),
+                ]))
             } catch {
                 throw APIError.upstream("\(error)")
             }
