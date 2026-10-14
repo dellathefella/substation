@@ -91,6 +91,8 @@ name = "qwen3.5-35b-a3b"
 node = "studio0"
 reasoning = true
 size_gb = 21.0
+parallel_slots = 4.0
+kv_unified = false
 tier = "fast"
 
 [[models]]
@@ -102,4 +104,6 @@ kv_mb_per_1k_ctx = 54.0
 name = "qwen3.8-flash-next"
 node = "studio0"
 size_gb = 100.0
+parallel_slots = 4.0
+kv_unified = false
 tier = "smart"

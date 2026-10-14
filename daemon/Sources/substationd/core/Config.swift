@@ -36,6 +36,21 @@ public struct CatalogModel: Sendable, Hashable {
     public var kvMBPer1k: Double
     /// llama-server --parallel slots (KV replicated per slot).
     public var slots: Int
+    /// Number of full-context units the `-c` pool is sized against. NOTE: with
+    /// `--kv-unified`, llama.cpp treats `-c` as the PER-SEQUENCE context and
+    /// sizes the shared pool to `n_parallel × per_seq` — so there is NO memory
+    /// saving while keeping the full per-sequence window. Unified KV only helps
+    /// when per-sequence context is deliberately reduced below the trained max.
+    /// Disabled by default (`kv_unified = false`); the safe non-unified path
+    /// sizes `-c = per_slot × slots` and is what ships for the 262k models.
+    public var poolSlots: Int
+    /// Use a single unified KV buffer shared across all slots (`--kv-unified`).
+    /// OFF by default — see `poolSlots` note: it does not save memory at full
+    /// context and mis-sizing it can over-allocate (pool = per_seq × parallel).
+    public var kvUnified: Bool
+    /// The divisor used to size the `-c` pool: under unified KV it's the pool
+    /// unit count (`poolSlots`), otherwise the slot count (`slots`).
+    public var kvPoolSlots: Int { kvUnified ? max(1, poolSlots) : max(1, slots) }
     /// Vision (multimodal) projector file for llama.cpp --mmproj.
     public var mmproj: String?
     /// True when the profile can accept image inputs (mmproj present).
@@ -83,6 +98,15 @@ public struct ConfigSnapshot: Sendable {
     public var authToken: String { tree["daemon"]?["auth_token"]?.stringValue ?? "" }
     public var sessionStickSeconds: Int { tree["daemon"]?["session_stick_seconds"]?.intValue ?? 300 }
     public var maxConcurrentRequests: Int { tree["daemon"]?["max_concurrent_requests"]?.intValue ?? 8 }
+    /// Backpressure: max waiters before new requests get 429 instead of
+    /// joining a queue that won't drain in reasonable time. 0 = reject all
+    /// when at maxConcurrent (no queueing).
+    public var maxQueued: Int { tree["daemon"]?["max_queued"]?.intValue ?? 64 }
+    /// Per-session fairness: max requests one session may hold in flight
+    /// (active + queued) before it gets 429'd. Anonymous requests exempt.
+    public var maxPerSession: Int { tree["daemon"]?["max_per_session"]?.intValue ?? 4 }
+    /// Retry-After (ms) advertised on 429 responses.
+    public var admissionRetryAfterMs: Int { tree["daemon"]?["admission_retry_after_ms"]?.intValue ?? 2000 }
 
     public var clusterEnabled: Bool { tree["cluster"]?["enabled"]?.boolValue ?? false }
     /// False = this machine is control-plane only: no local engines, no local
@@ -106,6 +130,16 @@ public struct ConfigSnapshot: Sendable {
     /// When a reasoning model's request `max_tokens` is below this, raise it so
     /// the visible answer isn't starved by `reasoning_content`. 0 = disabled.
     public var reasoningReserveTokens: Int { tree["orchestrator"]?["reasoning_reserve_tokens"]?.intValue ?? 0 }
+    /// Size-based tier routing: a small request that triage didn't confidently
+    /// mark as hard work goes to the cheap tier, reserving the flagship's
+    /// slots for requests that actually need it. Only affects auto-routed
+    /// (non-pinned) requests.
+    public var sizeRouteEnabled: Bool { tree["orchestrator"]?["size_route_enabled"]?.boolValue ?? true }
+    /// A request whose estimated context need is <= this many tokens counts as
+    /// "small" for size-based tier routing.
+    public var smallRequestTokens: Int { tree["orchestrator"]?["small_request_tokens"]?.intValue ?? 256 }
+    /// The tier small requests are routed to.
+    public var smallRequestTier: String { tree["orchestrator"]?["small_request_tier"]?.stringValue ?? "fast" }
     /// Model to use when auto routing but the orchestrator/triage model is unavailable.
     /// Empty → smallest catalog model.
     public var defaultModel: String { tree["orchestrator"]?["default_model"]?.stringValue ?? "" }
@@ -224,6 +258,8 @@ public struct ConfigSnapshot: Sendable {
                 flags: m["flags"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
                 kvMBPer1k: m["kv_mb_per_1k_ctx"]?.doubleValue ?? 0,
                 slots: m["parallel_slots"]?.intValue ?? 4,
+                poolSlots: m["pool_slots"]?.intValue ?? 4,
+                kvUnified: m["kv_unified"]?.boolValue ?? false,
                 mmproj: m["mmproj"]?.stringValue.map { Self.normalize(Self.expandPath($0)) },
                 vision: m["vision"]?.boolValue ?? ((m["mmproj"]?.stringValue) != nil),
                 enabled: m["enabled"]?.boolValue ?? true,

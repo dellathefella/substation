@@ -66,7 +66,8 @@ let engines = EngineActor(events: events, metrics: metrics, mem: mem, nodes: nod
 
 let snapshot = await cfg.snapshot
 await events.configure(ringSize: snapshot.eventRingSize)
-await admission.configure(snapshot.maxConcurrentRequests)
+await admission.configure(snapshot.maxConcurrentRequests, maxQueued: snapshot.maxQueued,
+                         maxPerSession: snapshot.maxPerSession, retryAfterMs: snapshot.admissionRetryAfterMs)
 
 func absolute(_ p: String) -> String {
     (p as NSString).isAbsolutePath ? p : FileManager.default.currentDirectoryPath + "/" + p

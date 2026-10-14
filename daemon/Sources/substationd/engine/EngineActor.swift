@@ -55,6 +55,12 @@ public actor EngineActor {
     private var usedPorts: Set<Int> = []
     private var lastMetrics: [String: (tokens: Double, seconds: Double)] = [:]
     private var slotUtil: [String: (used: Int, slots: Int)] = [:]
+    /// In-flight spawn guard: serializes concurrent `ensureLoaded` calls for the
+    /// same `(model,node)`. The check-and-register spans several awaits (evict,
+    /// spawn HTTP, waitReady), so without this two requests both see "not
+    /// loaded" and each spawn a duplicate engine → double GPU → OOM. Waiters
+    /// here are resumed with the first spawn's result.
+    private var spawnInFlight: [String: [CheckedContinuation<RunningEngine, Error>]] = [:]
     private var triagePid: Int32 = 0
     private var rpcPid: Int32 = 0
     private var lastDecodeRates: [String: Double] = [:]
@@ -306,6 +312,15 @@ public actor EngineActor {
             return existing
         }
 
+        // In-flight guard: if a spawn for this (model,node) is already running,
+        // wait for it and share its result instead of spawning a duplicate.
+        if spawnInFlight[key] != nil {
+            return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<RunningEngine, Error>) in
+                spawnInFlight[key, default: []].append(cont)
+            }
+        }
+        spawnInFlight[key] = []
+        do {
         try await evictIfNeeded(for: model, cfg: cfg)
 
         // Hard guard: if this model's weights alone exceed the GPU wired limit
@@ -366,6 +381,9 @@ public actor EngineActor {
             ]
             if model.cacheIdleSlots && model.cacheRamMiB != 0 {
                 args.append("--cache-idle-slots")
+            }
+            if model.kvUnified {
+                args += ["--kv-unified", "--kv-unified-per-slot", String(model.ctx)]
             }
             let splitWeights: [String] = isSplit
                 ? (model.tensorSplit.isEmpty
@@ -459,7 +477,14 @@ public actor EngineActor {
             ("gb", .jDouble(model.sizeGB)),
             ("ms", .jInt(Int(Date().timeIntervalSince(t0) * 1000))),
         ])
+        let waiters = spawnInFlight.removeValue(forKey: key) ?? []
+        for w in waiters { w.resume(returning: engine) }
         return engine
+        } catch {
+            let waiters = spawnInFlight.removeValue(forKey: key) ?? []
+            for w in waiters { w.resume(throwing: error) }
+            throw error
+        }
     }
 
     /// Node-agent path: spawn a runner on the given port, bound 0.0.0.0 so the
@@ -489,6 +514,9 @@ public actor EngineActor {
         ]
         if model.cacheIdleSlots && model.cacheRamMiB != 0 {
             args.append("--cache-idle-slots")
+        }
+        if model.kvUnified {
+            args += ["--kv-unified", "--kv-unified-per-slot", String(model.ctx)]
         }
         if !rpc.isEmpty {
             args += ["--rpc", rpc.joined(separator: ","), "--tensor-split", tensorSplit.joined(separator: ",")]
@@ -733,7 +761,7 @@ public actor EngineActor {
         let residentGPU = residentGPUFootprintGB(excluding: model.name)
         return Self.sizedCacheTokens(
             freeGB: free, gpuLimitGB: limit, residentGPU: residentGPU,
-            sizeGB: model.sizeGB, slots: model.slots, kvMBPer1k: model.kvMBPer1k, ctx: model.ctx
+            sizeGB: model.sizeGB, slots: model.kvPoolSlots, kvMBPer1k: model.kvMBPer1k, ctx: model.ctx
         )
     }
 

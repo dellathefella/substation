@@ -231,7 +231,12 @@ public struct Orchestrator: Sendable {
             }
             var placement = Placement.parse(catalog?.placement ?? "local")
             if !cfg.clusterEnabled { placement = .local }
-            let queueWait = await admission.acquire()
+            let queueWait: Double
+            do {
+                queueWait = try await admission.acquire(session: sessionKey)
+            } catch let e as AdmissionError {
+                throw APIError.overloaded(retryAfterMs: e.retryAfterMs, reason: e.reason)
+            }
             let engine: RunningEngine
             do {
                 let cat = catalog ?? cfg.models[0]
@@ -241,7 +246,7 @@ public struct Orchestrator: Sendable {
                     engine = try await engines.ensureLoaded(cat, placement: placement, cfg: cfg)
                 }
             } catch {
-                await admission.release()
+                await admission.release(session: sessionKey)
                 throw error
             }
             try? await events.publish("router.disabled", [
@@ -315,6 +320,29 @@ public struct Orchestrator: Sendable {
         ])
         await metrics.increment("triage_\(decision.method)")
         await metrics.increment("tier_\(decision.tier)")
+
+        // 1b) Size-based tier routing: a tiny request that triage wasn't
+        //     confident is "hard" goes to the cheap tier, so short chats don't
+        //     occupy the flagship's scarce slots. Only for auto-routed requests
+        //     (a pinned tier/model is always respected); a confident hard call
+        //     (confidence >= upgrade threshold) stays on its tier.
+        if cfg.sizeRouteEnabled, forcedTier == nil, presetModel == nil,
+           needCtx <= cfg.smallRequestTokens,
+           decision.confidence < cfg.triageUpgradeConfidence,
+           cfg.tierRank(decision.tier) > cfg.tierRank(cfg.smallRequestTier),
+           (cfg.tiers[cfg.smallRequestTier] ?? []).contains(where: {
+               let m = cfg.model($0); return m?.enabled == true && (m?.ctx ?? 0) >= needCtx
+           }) {
+            try? await events.publish("router.size_downgrade", [
+                ("id", .string(requestId)), ("from", .string(decision.tier)),
+                ("to", .string(cfg.smallRequestTier)), ("need_ctx", .jInt(needCtx)),
+                ("confidence", .jDouble(decision.confidence)),
+            ])
+            decision = TierDecision(tier: cfg.smallRequestTier, confidence: decision.confidence,
+                                   method: decision.method + "+size", ms: decision.ms,
+                                   signals: decision.signals + ["size_downgrade:\(needCtx)"])
+            await metrics.increment("tier_\(cfg.smallRequestTier)")
+        }
 
         // 2) Session stickiness: stay on the pinned model; one-way upgrade only
         //    at confidence >= threshold (transparency invariant #3).
@@ -497,8 +525,18 @@ public struct Orchestrator: Sendable {
             )
         }
 
-        // 6) Admission gate (queued), then load (loading) — never 503.
-        let queueWait = await admission.acquire()
+        // 6) Admission gate (queued), then load (loading). Backpressure: a
+        //    full queue or a hog session gets 429 instead of hanging forever.
+        let queueWait: Double
+        do {
+            queueWait = try await admission.acquire(session: sessionKey)
+        } catch let e as AdmissionError {
+            try? await events.publish("engine.reject", [
+                ("id", .string(requestId)), ("reason", .string(e.reason)),
+                ("retry_after_ms", .jInt(e.retryAfterMs)),
+            ])
+            throw APIError.overloaded(retryAfterMs: e.retryAfterMs, reason: e.reason)
+        }
         var loadedWait = 0.0
         if queueWait > 1 {
             try? await events.publish("engine.wait", [
@@ -514,7 +552,7 @@ public struct Orchestrator: Sendable {
                 engine = try await engines.ensureLoaded(finalCatalog, placement: placement, cfg: cfg)
             }
         } catch {
-            await admission.release()
+            await admission.release(session: sessionKey)
             throw error
         }
         loadedWait = Date().timeIntervalSince(t0) * 1000

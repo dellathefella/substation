@@ -12,11 +12,13 @@ public enum APIError: Error {
     case triageModelMissing(String)
     case noModelLoaded(String)
     case noCapacity(String)
+    case overloaded(retryAfterMs: Int, reason: String)
 
     public var abortResponse: Response {
         let code: String
         let status: HTTPResponseStatus
         let message: String
+        var retryAfter: Int? = nil
         switch self {
         case .badRequest(let m): status = .badRequest; code = "bad_request"; message = m
         case .paused: status = .serviceUnavailable; code = "paused"; message = "substationd is paused"
@@ -24,6 +26,12 @@ public enum APIError: Error {
         case .notFound(let m): status = .notFound; code = "not_found"; message = m
         case .upstream(let m): status = .badGateway; code = "upstream_error"; message = m
         case .noCapacity(let m): status = .insufficientStorage; code = "no_capacity"; message = m
+        case .overloaded(let ms, let reason):
+            status = .tooManyRequests; code = "overloaded"
+            retryAfter = max(1, (ms + 999) / 1000)
+            message = reason == "session_limit"
+                ? "This session already has its maximum requests in flight — retry shortly."
+                : "Substation is at capacity (queue full) — retry shortly."
         case .triageModelMissing(let path):
             status = .serviceUnavailable; code = "triage_model_missing"
             message = "Auto mode requires the triage (small) model — not found at '\(path)'. Download it (or set orchestrator.triage_gguf) to unlock auto routing; until then select a specific model by name."
@@ -33,6 +41,7 @@ public enum APIError: Error {
         }
         var headers = HTTPHeaders()
         headers.replaceOrAdd(name: .contentType, value: "application/json; charset=utf-8")
+        if let ra = retryAfter { headers.replaceOrAdd(name: "retry-after", value: String(ra)) }
         let body: JSONValue = .object([
             "error": .object(["message": .string(message), "code": .string(code)]),
         ])
@@ -111,7 +120,7 @@ public struct ChatPipeline: Sendable {
         let cfg = await orch.cfg.snapshot
         let key = Self.cacheKey(model: route.model, body: body)
         if cfg.cacheEnabled, let cached = await orch.cache.get(model: route.model, key: key, enabled: cfg.cacheEnabled) {
-            await orch.admission.release()
+            await orch.admission.release(session: sessionKey)
             await orch.events.publish("cache.hit", [
                 ("id", .string(route.requestId)), ("model", .string(route.model)),
             ])
@@ -158,10 +167,10 @@ public struct ChatPipeline: Sendable {
                 timeout: 600
             )
         } catch {
-            await orch.admission.release()
+            await orch.admission.release(session: sessionKey)
             throw APIError.upstream("engine unreachable: \(error)")
         }
-        await orch.admission.release()
+        await orch.admission.release(session: sessionKey)
         let totalMs = Date().timeIntervalSince(t0) * 1000
 
         guard status < 400, var out = reply?.objectValue else {
@@ -379,7 +388,7 @@ public struct ChatPipeline: Sendable {
             let totalMs = Date().timeIntervalSince(t0) * 1000
             let completionTokens = usageCompletion > 0 ? Double(usageCompletion) : Double(tokens)
             let tokS = totalMs > 0 ? completionTokens / (totalMs / 1000) : 0
-            await orch.admission.release()
+            await orch.admission.release(session: sessionKey)
             await orch.metrics.increment("requests_total")
             await orch.metrics.record("total_ms", totalMs)
             await orch.metrics.record("tok_s", tokS)

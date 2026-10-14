@@ -232,14 +232,35 @@ final class CoreLogicTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeModel(name: String, sizeGB: Double, ctx: Int, slots: Int, kv: Double) -> CatalogModel {
+    private func makeModel(name: String, sizeGB: Double, ctx: Int, slots: Int, kv: Double,
+                          poolSlots: Int? = nil, kvUnified: Bool = false) -> CatalogModel {
         CatalogModel(
             name: name, gguf: "/tmp/\(name).gguf", dir: nil, file: nil, tier: "balanced",
             sizeGB: sizeGB, ctx: ctx, placement: "local", node: nil, nodes: [], kind: "local",
             baseUrl: nil, apiKey: nil, remoteModel: nil, proto: "openai", flags: [],
-            kvMBPer1k: kv, slots: slots, mmproj: nil, vision: false, enabled: true,
+            kvMBPer1k: kv, slots: slots, poolSlots: poolSlots ?? slots, kvUnified: kvUnified,
+            mmproj: nil, vision: false, enabled: true,
             tensorSplit: "", cacheReuse: 256, cacheRamMiB: 8192, cacheIdleSlots: true,
             reasoning: false
         )
+    }
+
+    /// Unified KV decouples the `-c` pool from the parallel slot count: 16
+    /// slots sharing a 4-unit pool costs the same memory as 4 slots, and each
+    /// slot can still reach the full ctx (via --kv-unified-per-slot). A
+    /// non-unified 16-slot model would shrink every slot below the window.
+    func testUnifiedKVPoolDecoupledFromParallel() {
+        let uni = makeModel(name: "uni", sizeGB: 100, ctx: 262144, slots: 16, kv: 54,
+                           poolSlots: 4, kvUnified: true)
+        XCTAssertEqual(uni.kvPoolSlots, 4)
+        let pool = EngineActor.sizedCacheTokens(freeGB: 200, gpuLimitGB: 230, residentGPU: 0,
+                                              sizeGB: 100, slots: uni.kvPoolSlots, kvMBPer1k: 54, ctx: 262144)
+        XCTAssertEqual(pool, 1_048_576)   // 4 × 262144, same as the old 4-slot footprint
+
+        let nonUni = makeModel(name: "nonuni", sizeGB: 100, ctx: 262144, slots: 16, kv: 54)
+        XCTAssertEqual(nonUni.kvPoolSlots, 16)
+        let nonUniPool = EngineActor.sizedCacheTokens(freeGB: 200, gpuLimitGB: 230, residentGPU: 0,
+                                                    sizeGB: 100, slots: nonUni.kvPoolSlots, kvMBPer1k: 54, ctx: 262144)
+        XCTAssertLessThan(nonUniPool / 16, 262144)   // per-slot shrinks below the window
     }
 }
