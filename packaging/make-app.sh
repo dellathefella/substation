@@ -36,6 +36,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$VER</string>
   <key>CFBundleShortVersionString</key><string>$VER</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
@@ -50,6 +51,27 @@ cp "$BIN" "$APP/Contents/Resources/substationd"
 cp webui/src/../../assets/substation.svg "$APP/Contents/Resources/substation.svg" 2>/dev/null || true
 mkdir -p "$APP/Contents/Resources/webui"
 cp -R webui/dist/. "$APP/Contents/Resources/webui/"
+
+echo "==> generating app icon from favicon"
+ICONSET="$ROOT/build/AppIcon.iconset"
+BASE_PNG="$ROOT/build/favicon-1024.png"
+rm -rf "$ICONSET" "$BASE_PNG" "$ROOT/build/substation.svg.png"
+mkdir -p "$ICONSET"
+if qlmanage -t -s 1024 -o "$ROOT/build" "$ROOT/assets/substation.svg" >/dev/null 2>&1 && [ -f "$ROOT/build/substation.svg.png" ]; then
+  mv "$ROOT/build/substation.svg.png" "$BASE_PNG"
+  for sz in 16 32 128 256 512; do
+    dbl=$((sz * 2))
+    sips -z "$sz" "$sz" "$BASE_PNG" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null 2>&1
+    sips -z "$dbl" "$dbl" "$BASE_PNG" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null 2>&1
+  done
+  if iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null; then
+    echo "    app icon: AppIcon.icns (from favicon)"
+  else
+    echo "    WARN: iconutil failed; app will use generic icon"
+  fi
+else
+  echo "    WARN: could not render favicon via qlmanage; app will use generic icon"
+fi
 
 HAS_LLAMA=0
 if [ -x "$ROOT/$LLAMA" ] && [ -x "$ROOT/$RPC" ]; then
@@ -101,6 +123,11 @@ rm -rf "$STAGE" "build/Substation-$VER.dmg"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
+# DMG volume icon — share the favicon on the mounted disk too.
+if [ -f "$APP/Contents/Resources/AppIcon.icns" ]; then
+  cp "$APP/Contents/Resources/AppIcon.icns" "$STAGE/$(printf 'Icon\r')"
+  SetFile -a C "$STAGE" 2>/dev/null || true
+fi
 hdiutil create -volname "Substation $VER" -srcfolder "$STAGE" -ov -format UDZO "build/Substation-$VER.dmg" >/dev/null
 
 echo
